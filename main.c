@@ -89,6 +89,7 @@ int main(int argc, char** argv) {
         char cmd_name[256];
         if (sscanf(input_line, "%256s", cmd_name) == 1) {
             if (strcmp(cmd_name, "find") == 0) {
+                find_cmd(input_line, pid);
             }
             else if (strcmp(cmd_name, "quit") == 0) {
                 break;
