@@ -211,6 +211,51 @@ union scan_value mem_to_value(void* mem, enum scan_type type) {
     return result;
 }
 
+// Return a char* since for Tstring we can just return the attached string buffer
+// Avoids copying the string over to the output buffer
+char* value_to_str(union scan_value value, enum scan_type type, char* output_buffer, size_t buf_len) {
+    switch (type) {
+        case Tbyte:
+            snprintf(output_buffer, buf_len, "%hhd", value.Tbyte);
+            return output_buffer;
+        case Tshort:
+            snprintf(output_buffer, buf_len, "%hd", value.Tshort);
+            return output_buffer;
+        case Tint:
+            snprintf(output_buffer, buf_len, "%d", value.Tint);
+            return output_buffer;
+        case Tlong:
+            snprintf(output_buffer, buf_len, "%ld", value.Tlong);
+            return output_buffer;
+        case Tubyte:
+            snprintf(output_buffer, buf_len, "%hhu", value.Tubyte);
+            return output_buffer;
+        case Tushort:
+            snprintf(output_buffer, buf_len, "%hu", value.Tushort);
+            return output_buffer;
+        case Tuint:
+            snprintf(output_buffer, buf_len, "%u", value.Tuint);
+            return output_buffer;
+        case Tulong:
+            snprintf(output_buffer, buf_len, "%lu", value.Tulong);
+            return output_buffer;
+        case Tfloat:
+            snprintf(output_buffer, buf_len, "%f", value.Tfloat);
+            return output_buffer;
+        case Tdouble:
+            snprintf(output_buffer, buf_len, "%lf", value.Tdouble);
+            return output_buffer;
+        case Tptr:
+            snprintf(output_buffer, buf_len, "0x%p", value.Tptr);
+            return output_buffer;
+        case Tstring:
+            return value.Tstring;
+        case Tinvalid:
+        default:
+            return NULL;
+    }
+}
+
 // Oh boy do I love not having generics at times like these :)
 int satisfies_condition(union scan_value value, enum scan_type type, enum scan_cond cond, union scan_value cond_value) {
     // Can simplify a bit going cond first since exists is always true, and the temporal conditions are the same as their non-temporal counterparts

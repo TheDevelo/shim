@@ -48,6 +48,11 @@ struct scan_node* find_cmd(char* input, pid_t child_pid) {
             printf("invalid condition specified - wrap your string in single quotes\n");
             return NULL;
         }
+        // Must actually specify some kind of string
+        if (strlen(extra_param_str) == 0) {
+            printf( "invalid condition specified - provide a non-empty string\n");
+            return NULL;
+        }
     }
     union scan_value extra_param;
     if (cond == Cexists) {
@@ -143,18 +148,19 @@ struct scan_node* find_cmd(char* input, pid_t child_pid) {
                     cur_node = cur_node->next;
                     cur_node->value = mem_value;
                     cur_node->type = type;
+                    cur_node->addr = (void*) (addr + offset);
                     cur_node->next = NULL;
                     if (type == Tstring) {
                         size_t buf_len = strlen(extra_param.Tstring);
                         cur_node->value.Tstring = malloc(buf_len + 1);
                         strncpy(cur_node->value.Tstring, extra_param.Tstring, buf_len); // We can copy the param instead of memory since != and exists are disallowed
                     }
-
-                    printf("found value at 0x%8lx\n", addr + offset);
                 }
             }
         }
     }
+    fclose(maps);
+    close(memory_fd);
 
     // Report to the user the result of the initial scan
     if (head.next == NULL) {
@@ -167,11 +173,74 @@ struct scan_node* find_cmd(char* input, pid_t child_pid) {
             node_count += 1;
             cur_node = cur_node->next;
         }
-        printf("found %lu matching values (%lu pages)\n", node_count, node_count / 10);
+        printf("found %lu matching values (%lu pages)\n", node_count, (node_count - 1) / 10 + 1);
     }
     printf("\n");
 
     return head.next;
+}
+
+void page_cmd(char* input, pid_t child_pid, struct scan_node* result_list) {
+    unsigned int page_num;
+    if (sscanf(input, "page %u", &page_num) != 1) {
+        printf("invalid 'page' command\n");
+        return;
+    }
+    page_num -= 1; // Want to start the pages at page 1
+
+    for (int i = 0; i < page_num * 10; i++) {
+        result_list = result_list->next;
+        if (result_list == NULL) {
+            printf("invalid 'page' command - page does not exist\n");
+            return;
+        }
+    }
+
+    // Open the memory file for reading
+    char file_path[256];
+    snprintf(file_path, 256, "/proc/%d/mem", child_pid);
+    int memory_fd = open(file_path, O_RDWR);
+    if (memory_fd == -1) {
+        perror("failed to open the /proc/PID/mem file");
+        return;
+    }
+
+    char scan_value_buf[256];
+    char cur_value_buf[256];
+    printf("entry number: address - value at scan - current value\n");
+    for (int i = 1; i <= 10; i++) {
+        // Read the memory value at the specified address
+        int read_size = type_step(result_list->type);
+        if (result_list->type == Tstring) {
+            read_size = strlen(result_list->value.Tstring);
+        }
+        char read_buf[read_size + 1];
+        read_buf[read_size] = '\0'; // Add null-terminator for strings
+        if (lseek(memory_fd, (unsigned long) result_list->addr, SEEK_SET) == -1) {
+            perror("could not lseek() in the memory file");
+            return;
+        }
+
+        char* cur_value_str;
+        if (read(memory_fd, read_buf, read_size) == -1) {
+            cur_value_str = "INVALID";
+        }
+        else {
+            // Convert read value into appropriate string
+            union scan_value read_value = mem_to_value(&read_buf, result_list->type);
+            cur_value_str = value_to_str(read_value, result_list->type, cur_value_buf, 256);
+        }
+
+        // Display the desired info
+        printf("%d: %p - %s - %s\n", page_num * 10 + i, result_list->addr,
+                value_to_str(result_list->value, result_list->type, scan_value_buf, 256),
+                cur_value_str);
+
+        result_list = result_list->next;
+        if (result_list == NULL) {
+            break;
+        }
+    }
 }
 
 void help_cmd(char* input) {
@@ -188,7 +257,7 @@ void help_cmd(char* input) {
             printf("TYPEs available:\n");
             printf("byte, short, int, long - signed integers corresponding to the architecture's C types\n");
             printf("ubyte, ushort, uint, ulong - unsigned integers corresponding to the architecture's C types\n");
-            printf("float, double - floating point numbers corresponding to the architecture's C types\n"); 
+            printf("float, double - floating point numbers corresponding to the architecture's C types\n");
             printf("ptr - pointer corresponding to the architecture's C type\n");
             printf("string - null-terminated string\n\n");
 
@@ -198,6 +267,11 @@ void help_cmd(char* input) {
             printf("    >, <, >=, <= are only available to numeric types (i.e. not 'string'), while ==, != are available to all types\n");
             printf("exists - all memory passes this condition (useful when further refining with 'refine')\n");
             printf("due to memory limiations, 'exists' and '==' are not available to 'string' in 'find' (but are in 'refine')\n");
+        }
+        else if (strcmp(sub_cmd, "page") == 0) {
+            printf("page - displays the current results of the ongoing memory scan\n");
+            printf("format: page X\n");
+            printf("Displays the 10 memory values on page X for the scan results (ordered by address)\n");
         }
         else if (strcmp(sub_cmd, "finish") == 0) {
             printf("finish - finishes the ongoing memory scan\n");
@@ -215,6 +289,7 @@ void help_cmd(char* input) {
     }
     else {
         printf("find - searches for memory that matches specified conditions\n");
+        printf("page - displays the current results of the ongoing memory scan\n");
         printf("finish - finishes the ongoing memory scan\n");
         printf("help - issues a help statement - use 'help x' to find more about the command 'x'\n");
         printf("quit - exits the program\n");

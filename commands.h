@@ -52,8 +52,10 @@ union scan_value {
 struct scan_node {
     union scan_value value;
     enum scan_type type;
+    void* addr; // Address in child's address space, not the parent's.
     struct scan_node* next;
 };
 
-void help_cmd(char* input);
 struct scan_node* find_cmd(char* input, pid_t child_pid);
+void page_cmd(char* input, pid_t child_pid, struct scan_node* result_list);
+void help_cmd(char* input);

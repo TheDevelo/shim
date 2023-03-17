@@ -97,6 +97,14 @@ int main(int argc, char** argv) {
                     printf("a scan is already ongoing. please finish the current scan with 'finish' before starting a new one\n");
                 }
             }
+            else if (strcmp(cmd_name, "page") == 0) {
+                if (scan_results != NULL) {
+                    page_cmd(input_line, pid, scan_results);
+                }
+                else {
+                    printf("no scan is ongoing\n");
+                }
+            }
             else if (strcmp(cmd_name, "finish") == 0) {
                 // Clean up the scan nodes
                 struct scan_node* cur_node = scan_results;
