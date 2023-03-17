@@ -81,6 +81,7 @@ int main(int argc, char** argv) {
     char* input_line = NULL;
     size_t input_len = 0;
     struct scan_node* scan_results = NULL;
+    pid_t scan_pid = pid;
     while (1) {
         printf("> ");
         fflush(stdout);
@@ -91,7 +92,7 @@ int main(int argc, char** argv) {
         if (sscanf(input_line, "%256s", cmd_name) == 1) {
             if (strcmp(cmd_name, "find") == 0) {
                 if (scan_results == NULL) {
-                    scan_results = find_cmd(input_line, pid);
+                    scan_results = find_cmd(input_line, scan_pid);
                 }
                 else {
                     printf("a scan is already ongoing. please finish the current scan with 'finish' before starting a new one\n");
@@ -99,7 +100,7 @@ int main(int argc, char** argv) {
             }
             else if (strcmp(cmd_name, "page") == 0) {
                 if (scan_results != NULL) {
-                    page_cmd(input_line, pid, scan_results);
+                    page_cmd(input_line, scan_pid, scan_results);
                 }
                 else {
                     printf("no scan is ongoing\n");
@@ -118,6 +119,17 @@ int main(int argc, char** argv) {
                 }
                 scan_results = NULL;
             }
+            else if (strcmp(cmd_name, "config") == 0) {
+                // Configuration options
+                unsigned int value_uint;
+                if (sscanf(input_line, "config pid %u", &value_uint) == 1) {
+                    scan_pid = value_uint;
+                    printf("now scanning pid %d\n", scan_pid);
+                }
+                else {
+                    printf("invalid 'config' command\n");
+                }
+            }
             else if (strcmp(cmd_name, "quit") == 0) {
                 break;
             }
@@ -130,7 +142,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    kill(pid, SIGTERM);
+    killpg(pid, SIGTERM);
     kill(dummy_pid, SIGTERM);
 }
 

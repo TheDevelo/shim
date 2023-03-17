@@ -101,7 +101,7 @@ struct scan_node* find_cmd(char* input, pid_t child_pid) {
         char file_name[4096];
         file_name[0] = '\0'; // Set string to empty in case there is no file name in the mmap line
 
-        matched = sscanf(mmap_line, "%lx-%lx %4c %lx %u:%u %u %4096s", &start_addr, &end_addr, perms, &offset, &major_id, &minor_id, &inode, file_name);
+        matched = sscanf(mmap_line, "%lx-%lx %4c %lx %x:%x %u %4096[^\n]", &start_addr, &end_addr, perms, &offset, &major_id, &minor_id, &inode, file_name);
         if (matched != 7 && matched != 8) {
             printf("malformed memory map file\n");
             return NULL;
@@ -123,7 +123,8 @@ struct scan_node* find_cmd(char* input, pid_t child_pid) {
         }
         if (read(memory_fd, &page[READ_BUF_SIZE], READ_BUF_SIZE) == -1) {
             perror("failed to read() from memory file");
-            return NULL;
+            printf("skipping %lx-%lx (%s) due to read failure\n", start_addr, end_addr, file_name);
+            continue;
         }
 
         for (unsigned long addr = start_addr; addr < end_addr; addr += READ_BUF_SIZE) {
@@ -132,7 +133,8 @@ struct scan_node* find_cmd(char* input, pid_t child_pid) {
             if (addr + READ_BUF_SIZE < end_addr) {
                 if (read(memory_fd, &page[READ_BUF_SIZE], READ_BUF_SIZE) == -1) {
                     perror("failed to read() from memory file");
-                    return NULL;
+                    printf("skipping %lx-%lx (%s) due to read failure\n", start_addr, end_addr, file_name);
+                    break;
                 }
             }
             else {
@@ -276,6 +278,13 @@ void help_cmd(char* input) {
         else if (strcmp(sub_cmd, "finish") == 0) {
             printf("finish - finishes the ongoing memory scan\n");
         }
+        else if (strcmp(sub_cmd, "config") == 0) {
+            printf("config - sets configuration\n");
+            printf("format: config PARAM VALUE\n\n");
+
+            printf("Available configuration parameters (and value):\n");
+            printf("pid PID: sets the PID to scan\n");
+        }
         else if (strcmp(sub_cmd, "help") == 0) {
             printf("help - issues a help statement\n");
             printf("use 'help x' to find more about the command 'x'\n");
@@ -291,6 +300,7 @@ void help_cmd(char* input) {
         printf("find - searches for memory that matches specified conditions\n");
         printf("page - displays the current results of the ongoing memory scan\n");
         printf("finish - finishes the ongoing memory scan\n");
+        printf("config - sets configuration\n");
         printf("help - issues a help statement - use 'help x' to find more about the command 'x'\n");
         printf("quit - exits the program\n");
     }
