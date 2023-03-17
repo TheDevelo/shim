@@ -80,6 +80,7 @@ int main(int argc, char** argv) {
 
     char* input_line = NULL;
     size_t input_len = 0;
+    struct scan_node* scan_results = NULL;
     while (1) {
         printf("> ");
         fflush(stdout);
@@ -89,7 +90,25 @@ int main(int argc, char** argv) {
         char cmd_name[256];
         if (sscanf(input_line, "%256s", cmd_name) == 1) {
             if (strcmp(cmd_name, "find") == 0) {
-                find_cmd(input_line, pid);
+                if (scan_results == NULL) {
+                    scan_results = find_cmd(input_line, pid);
+                }
+                else {
+                    printf("a scan is already ongoing. please finish the current scan with 'finish' before starting a new one\n");
+                }
+            }
+            else if (strcmp(cmd_name, "finish") == 0) {
+                // Clean up the scan nodes
+                struct scan_node* cur_node = scan_results;
+                while (cur_node != NULL) {
+                    struct scan_node* next = cur_node->next;
+                    if (cur_node->type == Tstring) {
+                        free(cur_node->value.Tstring);
+                    }
+                    free(cur_node);
+                    cur_node = next;
+                }
+                scan_results = NULL;
             }
             else if (strcmp(cmd_name, "quit") == 0) {
                 break;
