@@ -10,6 +10,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include "commands.h"
+#include "helpers.h"
 
 // Use lxterminal --command= on Pi, gnome-terminal -- on laptop. Would be better to set using an environment variable.
 char* term_format = "gnome-terminal -- /proc/%d/exe";
@@ -81,7 +82,7 @@ int main(int argc, char** argv) {
     char* input_line = NULL;
     size_t input_len = 0;
     struct scan_node* scan_results = NULL;
-    pid_t scan_pid = pid;
+    struct scan_config config = { .scan_pid = pid, .skip_files = 1 };
     while (1) {
         printf("> ");
         fflush(stdout);
@@ -92,15 +93,23 @@ int main(int argc, char** argv) {
         if (sscanf(input_line, "%256s", cmd_name) == 1) {
             if (strcmp(cmd_name, "find") == 0) {
                 if (scan_results == NULL) {
-                    scan_results = find_cmd(input_line, scan_pid);
+                    scan_results = find_cmd(input_line, config);
                 }
                 else {
                     printf("a scan is already ongoing. please finish the current scan with 'finish' before starting a new one\n");
                 }
             }
+            else if (strcmp(cmd_name, "refine") == 0) {
+                if  (scan_results != NULL) {
+                    scan_results = refine_cmd(input_line, config, scan_results);
+                }
+                else {
+                    printf("no scan is ongoing\n");
+                }
+            }
             else if (strcmp(cmd_name, "page") == 0) {
                 if (scan_results != NULL) {
-                    page_cmd(input_line, scan_pid, scan_results);
+                    page_cmd(input_line, config, scan_results);
                 }
                 else {
                     printf("no scan is ongoing\n");
@@ -110,12 +119,7 @@ int main(int argc, char** argv) {
                 // Clean up the scan nodes
                 struct scan_node* cur_node = scan_results;
                 while (cur_node != NULL) {
-                    struct scan_node* next = cur_node->next;
-                    if (cur_node->type == Tstring) {
-                        free(cur_node->value.Tstring);
-                    }
-                    free(cur_node);
-                    cur_node = next;
+                    cur_node = free_node(cur_node);
                 }
                 scan_results = NULL;
             }
@@ -123,8 +127,18 @@ int main(int argc, char** argv) {
                 // Configuration options
                 unsigned int value_uint;
                 if (sscanf(input_line, "config pid %u", &value_uint) == 1) {
-                    scan_pid = value_uint;
-                    printf("now scanning pid %d\n", scan_pid);
+                    config.scan_pid = value_uint;
+                    printf("now scanning pid %d\n", config.scan_pid);
+                }
+                else if (sscanf(input_line, "config skip_files %u", &value_uint) == 1) {
+                    if (value_uint) {
+                        config.skip_files = 1;
+                        printf("skip files is now enabled\n");
+                    }
+                    else {
+                        config.skip_files = 0;
+                        printf("skip files is now disabled\n");
+                    }
                 }
                 else {
                     printf("invalid 'config' command\n");

@@ -56,6 +56,12 @@ struct scan_node {
     struct scan_node* next;
 };
 
-struct scan_node* find_cmd(char* input, pid_t child_pid);
-void page_cmd(char* input, pid_t child_pid, struct scan_node* result_list);
+struct scan_config {
+    pid_t scan_pid;
+    int skip_files;
+};
+
+struct scan_node* find_cmd(char* input, struct scan_config config);
+struct scan_node* refine_cmd(char* input, struct scan_config config, struct scan_node* result_list);
+void page_cmd(char* input, struct scan_config config, struct scan_node* result_list);
 void help_cmd(char* input);

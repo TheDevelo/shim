@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "commands.h"
 #include "helpers.h"
@@ -457,4 +458,14 @@ int satisfies_condition(union scan_value value, enum scan_type type, enum scan_c
         default:
             return 0;
     }
+}
+
+// Return the next node since we generally use this in context of manipulating the list
+struct scan_node* free_node(struct scan_node* node) {
+    struct scan_node* next = node->next;
+    if (node->type == Tstring) {
+        free(node->value.Tstring);
+    }
+    free(node);
+    return next;
 }
