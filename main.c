@@ -81,7 +81,7 @@ int main(int argc, char** argv) {
 
     char* input_line = NULL;
     size_t input_len = 0;
-    struct scan_node* scan_results = NULL;
+    struct scan_list scan_results = { .head = NULL, .type = Tinvalid };
     struct scan_config config = { .scan_pid = pid, .skip_files = 1 };
     while (1) {
         printf("> ");
@@ -92,7 +92,7 @@ int main(int argc, char** argv) {
         char cmd_name[256];
         if (sscanf(input_line, "%256s", cmd_name) == 1) {
             if (strcmp(cmd_name, "find") == 0) {
-                if (scan_results == NULL) {
+                if (scan_results.head == NULL) {
                     scan_results = find_cmd(input_line, config);
                 }
                 else {
@@ -100,7 +100,7 @@ int main(int argc, char** argv) {
                 }
             }
             else if (strcmp(cmd_name, "refine") == 0) {
-                if  (scan_results != NULL) {
+                if  (scan_results.head != NULL) {
                     scan_results = refine_cmd(input_line, config, scan_results);
                 }
                 else {
@@ -108,7 +108,7 @@ int main(int argc, char** argv) {
                 }
             }
             else if (strcmp(cmd_name, "page") == 0) {
-                if (scan_results != NULL) {
+                if (scan_results.head != NULL) {
                     page_cmd(input_line, config, scan_results);
                 }
                 else {
@@ -117,11 +117,11 @@ int main(int argc, char** argv) {
             }
             else if (strcmp(cmd_name, "finish") == 0) {
                 // Clean up the scan nodes
-                struct scan_node* cur_node = scan_results;
+                struct scan_node* cur_node = scan_results.head;
                 while (cur_node != NULL) {
-                    cur_node = free_node(cur_node);
+                    cur_node = free_node(cur_node, scan_results.type);
                 }
-                scan_results = NULL;
+                scan_results.head = NULL;
             }
             else if (strcmp(cmd_name, "config") == 0) {
                 // Configuration options
@@ -156,8 +156,8 @@ int main(int argc, char** argv) {
         }
     }
 
-    killpg(pid, SIGTERM);
-    kill(dummy_pid, SIGTERM);
+    killpg(pid, SIGKILL);
+    kill(dummy_pid, SIGKILL);
 }
 
 int terminal_func() {
@@ -195,6 +195,8 @@ int child_func(char** command) {
     }
     */
 
+    // Create new process group to kill all forked children as well
+    setpgid(0, 0);
     int ret = execvp(command[0], &command[1]);
     if (ret == -1) {
         perror("failed to execvp() the specified command");

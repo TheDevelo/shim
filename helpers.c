@@ -461,9 +461,9 @@ int satisfies_condition(union scan_value value, enum scan_type type, enum scan_c
 }
 
 // Return the next node since we generally use this in context of manipulating the list
-struct scan_node* free_node(struct scan_node* node) {
+struct scan_node* free_node(struct scan_node* node, enum scan_type type) {
     struct scan_node* next = node->next;
-    if (node->type == Tstring) {
+    if (type == Tstring) {
         free(node->value.Tstring);
     }
     free(node);

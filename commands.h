@@ -51,7 +51,6 @@ union scan_value {
 
 struct scan_node {
     union scan_value value;
-    enum scan_type type;
     void* addr; // Address in child's address space, not the parent's.
     struct scan_node* next;
 };
@@ -61,7 +60,12 @@ struct scan_config {
     int skip_files;
 };
 
-struct scan_node* find_cmd(char* input, struct scan_config config);
-struct scan_node* refine_cmd(char* input, struct scan_config config, struct scan_node* result_list);
-void page_cmd(char* input, struct scan_config config, struct scan_node* result_list);
+struct scan_list {
+    struct scan_node* head;
+    enum scan_type type;
+};
+
+struct scan_list find_cmd(char* input, struct scan_config config);
+struct scan_list refine_cmd(char* input, struct scan_config config, struct scan_list list);
+void page_cmd(char* input, struct scan_config config, struct scan_list list);
 void help_cmd(char* input);

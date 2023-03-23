@@ -8,7 +8,9 @@
 #include "commands.h"
 #include "helpers.h"
 
-struct scan_node* find_cmd(char* input, struct scan_config config) {
+struct scan_list find_cmd(char* input, struct scan_config config) {
+    struct scan_list result = { .head = NULL, .type = Tinvalid };
+
     // Parse the find command
     char type_str[32];
     char cond_str[32];
@@ -16,12 +18,12 @@ struct scan_node* find_cmd(char* input, struct scan_config config) {
     int matched = sscanf(input, "find %32s x where x %32s %256s", type_str, cond_str, extra_param_str);
     if (matched != 2 && matched != 3) {
         printf("invalid 'find' command\n");
-        return NULL;
+        return result;
     }
     enum scan_type type = str_to_type(type_str);
     if (type == Tinvalid) {
         printf("invalid type specified\n");
-        return NULL;
+        return result;
     }
     enum scan_cond cond = str_to_cond(cond_str);
     switch (cond) {
@@ -32,39 +34,39 @@ struct scan_node* find_cmd(char* input, struct scan_config config) {
         case Cbelow:
         case Cinvalid:
             printf("invalid condition specified\n");
-            return NULL;
+            return result;
         default:
     }
     if (type == Tstring) {
         // Disallow all but Ceq for strings
         if (cond != Ceq) {
             printf("invalid condition specified - only valid condition for string in 'find' is ==\n");
-            return NULL;
+            return result;
         }
         // Rescan input if string to force quotes and include whitespace in the following string
         matched = sscanf(input, "find string x where x %32s '%256[^'\n]'", cond_str, extra_param_str);
         matched += 1; // Adjust up by one since we didn't match the type in the retry
         if (matched != 3) {
             printf("invalid condition specified - wrap your string in single quotes\n");
-            return NULL;
+            return result;
         }
         // Must actually specify some kind of string
         if (strlen(extra_param_str) == 0) {
             printf( "invalid condition specified - provide a non-empty string\n");
-            return NULL;
+            return result;
         }
     }
     union scan_value extra_param;
     if (cond == Cexists) {
         if (matched == 3) {
             printf("invalid condition specified - exists does not need an extra parameter\n");
-            return NULL;
+            return result;
         }
     }
     else {
         if (matched == 2) {
             printf("invalid condition specified - %s requires an extra parameter\n", cond_str);
-            return NULL;
+            return result;
         }
         extra_param = parse_value(extra_param_str, type);
     }
@@ -75,20 +77,20 @@ struct scan_node* find_cmd(char* input, struct scan_config config) {
     FILE* maps = fopen(file_path, "r");
     if (maps == NULL) {
         perror("failed to open the /proc/PID/maps file");
-        return NULL;
+        return result;
     }
     snprintf(file_path, 256, "/proc/%d/mem", config.scan_pid);
     int memory_fd = open(file_path, O_RDWR);
     if (memory_fd == -1) {
         perror("failed to open the /proc/PID/mem file");
         fclose(maps);
-        return NULL;
+        return result;
     }
 
     // Scan each memory mapped region and construct a list of values
     char* mmap_line = NULL;
     size_t mmap_len = 0;
-    struct scan_node head = { .value.Tptr = NULL, .type = Tinvalid, .next = NULL };
+    struct scan_node head = { .value.Tptr = NULL, .next = NULL };
     struct scan_node* cur_node = &head;
     while (getline(&mmap_line, &mmap_len, maps) != -1) {
         // Parse the memory map line
@@ -107,7 +109,7 @@ struct scan_node* find_cmd(char* input, struct scan_config config) {
             printf("malformed memory map file\n");
             fclose(maps);
             close(memory_fd);
-            return NULL;
+            return result;
         }
 
         // Ignore [vvar], [vdso], [vsyscall] given they're kernel mechanisms for syscall acceleration (aka not what we want to search)
@@ -129,7 +131,7 @@ struct scan_node* find_cmd(char* input, struct scan_config config) {
             perror("could not lseek() in the memory file");
             fclose(maps);
             close(memory_fd);
-            return NULL;
+            return result;
         }
         if (read(memory_fd, &page[READ_BUF_SIZE], READ_BUF_SIZE) == -1) {
             perror("failed to read() from memory file");
@@ -159,7 +161,6 @@ struct scan_node* find_cmd(char* input, struct scan_config config) {
                     cur_node->next = malloc(sizeof(struct scan_node));
                     cur_node = cur_node->next;
                     cur_node->value = mem_value;
-                    cur_node->type = type;
                     cur_node->addr = (void*) (addr + offset);
                     cur_node->next = NULL;
                     if (type == Tstring) {
@@ -189,25 +190,27 @@ struct scan_node* find_cmd(char* input, struct scan_config config) {
     }
     printf("\n");
 
-    return head.next;
+    result.head = head.next;
+    result.type = type;
+    return result;
 }
 
-struct scan_node* refine_cmd(char* input, struct scan_config config, struct scan_node* result_list) {
+struct scan_list refine_cmd(char* input, struct scan_config config, struct scan_list list) {
     // Parse the refine command
     char cond_str[32];
     char extra_param_str[256];
     int matched = sscanf(input, "refine x %32s %256s", cond_str, extra_param_str);
     if (matched != 1 && matched != 2) {
         printf("invalid 'refine' command\n");
-        return result_list;
+        return list;
     }
     enum scan_cond cond = str_to_cond(cond_str);
     if (cond == Cinvalid) {
         printf("invalid condition specified\n");
-        return result_list;
+        return list;
     }
-    // Get type from top of result_list, since we have the same type for the whole list
-    enum scan_type type = result_list->type;
+
+    enum scan_type type = list.type;
     if (type == Tstring) {
         // Disallow numeric conditions for strings
         switch (cond) {
@@ -218,19 +221,19 @@ struct scan_node* refine_cmd(char* input, struct scan_config config, struct scan
             case Cabove:
             case Cbelow:
                 printf("invalid condition specified - don't use numeric conditions for strings\n");
-                return result_list;
+                return list;
             default:
         }
         // Rescan input if string to force quotes and include whitespace in the following string
         matched = sscanf(input, "refine x %32s '%256[^'\n]'", cond_str, extra_param_str);
         if (matched != 2) {
             printf("invalid condition specified - wrap your string in single quotes\n");
-            return result_list;
+            return list;
         }
         // Must actually specify some kind of string
         if (strlen(extra_param_str) == 0) {
             printf("invalid condition specified - provide a non-empty string\n");
-            return result_list;
+            return list;
         }
     }
     union scan_value extra_param;
@@ -242,7 +245,7 @@ struct scan_node* refine_cmd(char* input, struct scan_config config, struct scan
         case Cbelow:
             if (matched != 1) {
                 printf("invalid condition specified - %s does not need an extra parameter\n", cond_str);
-                return result_list;
+                return list;
             }
             break;
         case Ceq:
@@ -254,7 +257,7 @@ struct scan_node* refine_cmd(char* input, struct scan_config config, struct scan
         default:
             if (matched != 2) {
                 printf("invalid condition specified - %s requires an extra parameter\n", cond_str);
-                return result_list;
+                return list;
             }
             extra_param = parse_value(extra_param_str, type);
             break;
@@ -267,13 +270,14 @@ struct scan_node* refine_cmd(char* input, struct scan_config config, struct scan
     int memory_fd = open(file_path, O_RDWR);
     if (memory_fd == -1) {
         perror("failed to open the /proc/PID/mem file, aborting scan");
-        return NULL;
+        list.head = NULL;
+        return list;
     }
 
     // Scan on each entry in the result list
-    struct scan_node head = { .value.Tptr = NULL, .type = Tinvalid, .addr = NULL, .next = result_list };
+    struct scan_node head = { .value.Tptr = NULL, .addr = NULL, .next = list.head };
     struct scan_node* parent = &head;
-    struct scan_node* cur = result_list;
+    struct scan_node* cur = list.head;
     while (cur != NULL) {
         // Read the memory value at the specified address
         int read_size = type_step(type);
@@ -285,13 +289,14 @@ struct scan_node* refine_cmd(char* input, struct scan_config config, struct scan
         if (lseek(memory_fd, (unsigned long) cur->addr, SEEK_SET) == -1) {
             perror("could not lseek() in the memory file, aborting scan");
             close(memory_fd);
-            return NULL;
+            list.head = NULL;
+            return list;
         }
 
         if (read(memory_fd, read_buf, read_size) == -1) {
             // Failed to read address from file, remove from the list
             printf("failed to read at 0x%p, removing\n", cur->addr);
-            cur = free_node(cur);
+            cur = free_node(cur, type);
             parent->next = cur;
             continue;
         }
@@ -320,11 +325,15 @@ struct scan_node* refine_cmd(char* input, struct scan_config config, struct scan
         if (satisfies_condition(read_value, type, cond, cond_param)) {
             // Update the node's value
             cur->value = read_value;
+            if (type == Tstring) {
+                cur->value.Tstring = malloc(read_size + 1);
+                strncpy(cur->value.Tstring, read_value.Tstring, read_size); // We can copy the param instead of memory since != and exists are disallowed
+            }
             parent = cur;
             cur = cur->next;
         }
         else {
-            cur = free_node(cur);
+            cur = free_node(cur, type);
             parent->next = cur;
         }
     }
@@ -345,10 +354,11 @@ struct scan_node* refine_cmd(char* input, struct scan_config config, struct scan
     }
     printf("\n");
 
-    return head.next;
+    list.head = head.next;
+    return list;
 }
 
-void page_cmd(char* input, struct scan_config config, struct scan_node* result_list) {
+void page_cmd(char* input, struct scan_config config, struct scan_list list) {
     unsigned int page_num;
     if (sscanf(input, "page %u", &page_num) != 1) {
         printf("invalid 'page' command\n");
@@ -356,9 +366,10 @@ void page_cmd(char* input, struct scan_config config, struct scan_node* result_l
     }
     page_num -= 1; // Want to start the pages at page 1
 
+    struct scan_node* cur_node = list.head;
     for (int i = 0; i < page_num * 10; i++) {
-        result_list = result_list->next;
-        if (result_list == NULL) {
+        cur_node = cur_node->next;
+        if (cur_node == NULL) {
             printf("invalid 'page' command - page does not exist\n");
             return;
         }
@@ -378,13 +389,13 @@ void page_cmd(char* input, struct scan_config config, struct scan_node* result_l
     printf("entry number: address - value at scan - current value\n");
     for (int i = 1; i <= 10; i++) {
         // Read the memory value at the specified address
-        int read_size = type_step(result_list->type);
-        if (result_list->type == Tstring) {
-            read_size = strlen(result_list->value.Tstring);
+        int read_size = type_step(list.type);
+        if (list.type == Tstring) {
+            read_size = strlen(cur_node->value.Tstring);
         }
         char read_buf[read_size + 1];
         read_buf[read_size] = '\0'; // Add null-terminator for strings
-        if (lseek(memory_fd, (unsigned long) result_list->addr, SEEK_SET) == -1) {
+        if (lseek(memory_fd, (unsigned long) cur_node->addr, SEEK_SET) == -1) {
             perror("could not lseek() in the memory file");
             close(memory_fd);
             return;
@@ -396,17 +407,17 @@ void page_cmd(char* input, struct scan_config config, struct scan_node* result_l
         }
         else {
             // Convert read value into appropriate string
-            union scan_value read_value = mem_to_value(&read_buf, result_list->type);
-            cur_value_str = value_to_str(read_value, result_list->type, cur_value_buf, 256);
+            union scan_value read_value = mem_to_value(&read_buf, list.type);
+            cur_value_str = value_to_str(read_value, list.type, cur_value_buf, 256);
         }
 
         // Display the desired info
-        printf("%d: %p - %s - %s\n", page_num * 10 + i, result_list->addr,
-                value_to_str(result_list->value, result_list->type, scan_value_buf, 256),
+        printf("%d: %p - %s - %s\n", page_num * 10 + i, cur_node->addr,
+                value_to_str(cur_node->value, list.type, scan_value_buf, 256),
                 cur_value_str);
 
-        result_list = result_list->next;
-        if (result_list == NULL) {
+        cur_node = cur_node->next;
+        if (cur_node == NULL) {
             break;
         }
     }
