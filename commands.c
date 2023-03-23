@@ -8,6 +8,22 @@
 #include "commands.h"
 #include "helpers.h"
 
+const char* TYPE_STR[Tinvalid + 1] = {
+    [Tbyte] = "byte",
+    [Tshort] = "short",
+    [Tint] = "int",
+    [Tlong] = "long",
+    [Tubyte] = "ubyte",
+    [Tushort] = "ushort",
+    [Tuint] = "uint",
+    [Tulong] = "ulong",
+    [Tfloat] = "float",
+    [Tdouble] = "double",
+    [Tptr] = "ptr",
+    [Tstring] = "string",
+    [Tinvalid] = "invalid",
+};
+
 struct scan_list find_cmd(char* input, struct scan_config config) {
     struct scan_list result = { .head = NULL, .type = Tinvalid };
 
@@ -364,6 +380,10 @@ void page_cmd(char* input, struct scan_config config, struct scan_list list) {
         printf("invalid 'page' command\n");
         return;
     }
+    if (page_num < 1) {
+        printf("invalid 'page' command - page must be at least 1\n");
+        return;
+    }
     page_num -= 1; // Want to start the pages at page 1
 
     struct scan_node* cur_node = list.head;
@@ -425,6 +445,81 @@ void page_cmd(char* input, struct scan_config config, struct scan_list list) {
     close(memory_fd);
 }
 
+struct save_node* save_cmd(char* input, struct scan_config config, struct scan_list list) {
+    unsigned int entry_num;
+    if (sscanf(input, "save %u", &entry_num) != 1) {
+        printf("invalid 'save' command\n");
+        return NULL;
+    }
+    if (entry_num < 1) {
+        printf("invalid 'save' command - entry must be at least 1\n");
+        return NULL;
+    }
+
+    struct scan_node* cur_node = list.head;
+    for (int i = 1; i < entry_num; i++) {
+        cur_node = cur_node->next;
+        if (cur_node == NULL) {
+            printf("invalid 'save' command - entry does not exist\n");
+            return NULL;
+        }
+    }
+
+    struct save_node* result = malloc(sizeof(struct save_node));
+    result->type = list.type;
+    result->addr = cur_node->addr;
+    result->count = 1;
+    result->next = NULL;
+    if (list.type == Tstring) {
+        result->count = strlen(cur_node->value.Tstring);
+    }
+    return result;
+}
+
+void display_cmd(struct scan_config config, struct save_node* list) {
+    // Open the memory file for reading
+    char file_path[256];
+    snprintf(file_path, 256, "/proc/%d/mem", config.scan_pid);
+    int memory_fd = open(file_path, O_RDWR);
+    if (memory_fd == -1) {
+        perror("failed to open the /proc/PID/mem file");
+        return;
+    }
+
+    char cur_value_buf[256];
+    int entry = 1;
+    printf("entry number: address - type - current value\n");
+    while (list != NULL) {
+        // Read the memory value at the specified address
+        int read_size = type_step(list->type) * list->count;
+        char read_buf[read_size + 1];
+        read_buf[read_size] = '\0'; // Add null-terminator for strings
+        if (lseek(memory_fd, (unsigned long) list->addr, SEEK_SET) == -1) {
+            perror("could not lseek() in the memory file");
+            close(memory_fd);
+            return;
+        }
+
+        char* cur_value_str;
+        if (read(memory_fd, read_buf, read_size) == -1) {
+            cur_value_str = "INVALID";
+        }
+        else {
+            // Convert read value into appropriate string
+            union scan_value read_value = mem_to_value(&read_buf, list->type);
+            cur_value_str = value_to_str(read_value, list->type, cur_value_buf, 256);
+        }
+
+        // Display the desired info
+        printf("%d: %p - %s - %s\n", entry, list->addr, TYPE_STR[list->type], cur_value_str);
+
+        list = list->next;
+        entry += 1;
+    }
+
+    close(memory_fd);
+}
+
 void help_cmd(char* input) {
     char sub_cmd[256];
     if (sscanf(input, "help %256s", sub_cmd) == 1) {
@@ -471,8 +566,16 @@ void help_cmd(char* input) {
             printf("format: page X\n");
             printf("Displays the 10 memory values on page X for the scan results (ordered by address)\n");
         }
+        else if (strcmp(sub_cmd, "page") == 0) {
+            printf("save - saves a memory address found\n");
+            printf("format: save X\n");
+            printf("saves entry X (numbered in 'page') from the scan results for later use with 'display' and 'modify'\n");
+        }
         else if (strcmp(sub_cmd, "finish") == 0) {
             printf("finish - finishes the ongoing memory scan\n");
+        }
+        else if (strcmp(sub_cmd, "display") == 0) {
+            printf("display - displays all saved memory addresses\n");
         }
         else if (strcmp(sub_cmd, "config") == 0) {
             printf("config - sets configuration\n");
@@ -497,7 +600,9 @@ void help_cmd(char* input) {
         printf("find - searches for memory that matches specified conditions\n");
         printf("refine - refines the memory scan to match new conditions\n");
         printf("page - displays the current results of the ongoing memory scan\n");
+        printf("save - saves a memory address found\n");
         printf("finish - finishes the ongoing memory scan\n");
+        printf("display - displays all saved memory addresses\n");
         printf("config - sets configuration\n");
         printf("help - issues a help statement - use 'help x' to find more about the command 'x'\n");
         printf("quit - exits the program\n");

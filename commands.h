@@ -19,6 +19,8 @@ enum scan_type {
     Tinvalid
 };
 
+extern const char* TYPE_STR[Tinvalid + 1];
+
 enum scan_cond {
     Ceq,
     Cneq,
@@ -65,7 +67,16 @@ struct scan_list {
     enum scan_type type;
 };
 
+struct save_node {
+    enum scan_type type;
+    void* addr;
+    unsigned long count; // For strings (and other array types)
+    struct save_node* next;
+};
+
 struct scan_list find_cmd(char* input, struct scan_config config);
 struct scan_list refine_cmd(char* input, struct scan_config config, struct scan_list list);
 void page_cmd(char* input, struct scan_config config, struct scan_list list);
+struct save_node* save_cmd(char* input, struct scan_config config, struct scan_list list);
+void display_cmd(struct scan_config config, struct save_node* list);
 void help_cmd(char* input);

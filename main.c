@@ -83,6 +83,8 @@ int main(int argc, char** argv) {
     size_t input_len = 0;
     struct scan_list scan_results = { .head = NULL, .type = Tinvalid };
     struct scan_config config = { .scan_pid = pid, .skip_files = 1 };
+    struct save_node* save_head = NULL;
+    struct save_node* save_tail = NULL;
     while (1) {
         printf("> ");
         fflush(stdout);
@@ -114,6 +116,26 @@ int main(int argc, char** argv) {
                 else {
                     printf("no scan is ongoing\n");
                 }
+            }
+            else if (strcmp(cmd_name, "save") == 0) {
+                if (scan_results.head != NULL) {
+                    struct save_node* result = save_cmd(input_line, config, scan_results);
+                    if (result != NULL) {
+                        if (save_tail == NULL) {
+                            save_head = result;
+                            save_tail = result;
+                        }
+                        else {
+                            save_tail->next = result;
+                        }
+                    }
+                }
+                else {
+                    printf("no scan is ongoing\n");
+                }
+            }
+            else if (strcmp(cmd_name, "display") == 0) {
+                display_cmd(config, save_head);
             }
             else if (strcmp(cmd_name, "finish") == 0) {
                 // Clean up the scan nodes
@@ -156,6 +178,13 @@ int main(int argc, char** argv) {
         }
     }
 
+    struct save_node* cur_node = save_head;
+    while (cur_node != NULL) {
+        struct save_node* next = cur_node->next;
+        free(cur_node);
+        cur_node = next;
+    }
+
     killpg(pid, SIGKILL);
     kill(dummy_pid, SIGKILL);
 }
@@ -196,7 +225,11 @@ int child_func(char** command) {
     */
 
     // Create new process group to kill all forked children as well
+    // Have to ignore SIGTTOU since tcsetpgrp sends it
+    signal(SIGTTOU, SIG_IGN);
     setpgid(0, 0);
+    tcsetpgrp(STDIN_FILENO, getpgid(0));
+
     int ret = execvp(command[0], &command[1]);
     if (ret == -1) {
         perror("failed to execvp() the specified command");
