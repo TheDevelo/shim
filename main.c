@@ -127,6 +127,7 @@ int main(int argc, char** argv) {
                         }
                         else {
                             save_tail->next = result;
+                            save_tail = result;
                         }
                     }
                 }
@@ -136,6 +137,9 @@ int main(int argc, char** argv) {
             }
             else if (strcmp(cmd_name, "display") == 0) {
                 display_cmd(config, save_head);
+            }
+            else if (strcmp(cmd_name, "modify") == 0) {
+                modify_cmd(input_line, config, save_head);
             }
             else if (strcmp(cmd_name, "finish") == 0) {
                 // Clean up the scan nodes

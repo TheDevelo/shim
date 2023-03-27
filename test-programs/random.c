@@ -10,9 +10,10 @@ int main() {
     // Initialize the randomizer
     srand(time(NULL));
     do {
+        printf("old values - heap_int: %d, stack_int: %d\n", *heap_int, stack_int);
         *heap_int = rand() % 10000; // 10000 so I don't have to type out long numbers :)
         stack_int = rand() % 10000;
-        printf("heap_int: %d, stack_int: %d\n", *heap_int, stack_int);
+        printf("new values - heap_int: %d, stack_int: %d\n", *heap_int, stack_int);
     } while (getc(stdin) != EOF);
 
     free(heap_int);

@@ -79,4 +79,5 @@ struct scan_list refine_cmd(char* input, struct scan_config config, struct scan_
 void page_cmd(char* input, struct scan_config config, struct scan_list list);
 struct save_node* save_cmd(char* input, struct scan_config config, struct scan_list list);
 void display_cmd(struct scan_config config, struct save_node* list);
+void modify_cmd(char* input, struct scan_config config, struct save_node* list);
 void help_cmd(char* input);

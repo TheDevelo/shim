@@ -511,10 +511,82 @@ void display_cmd(struct scan_config config, struct save_node* list) {
         }
 
         // Display the desired info
-        printf("%d: %p - %s - %s\n", entry, list->addr, TYPE_STR[list->type], cur_value_str);
+        printf("#%d: %p - %s - %s\n", entry, list->addr, TYPE_STR[list->type], cur_value_str);
 
         list = list->next;
         entry += 1;
+    }
+
+    close(memory_fd);
+}
+
+void modify_cmd(char* input, struct scan_config config, struct save_node* list) {
+    unsigned int entry_num;
+    char value_str[256];
+    if (sscanf(input, "modify #%u %256s", &entry_num, value_str) != 2) {
+        printf("invalid 'modify' command\n");
+        return;
+    }
+    if (entry_num < 1) {
+        printf("invalid 'modify' command - entry must be at least 1\n");
+        return;
+    }
+
+    // Get the specified entry
+    for (int i = 1; i < entry_num; i++) {
+        list = list->next;
+        if (list == NULL) {
+            printf("invalid 'modify' command - specified entry does not exist\n");
+            return;
+        }
+    }
+    if (list == NULL) {
+        printf("invalid 'modify' command - specified entry does not exist\n");
+        return;
+    }
+    int value_count = list->count;
+
+    // Special string handling
+    if (list->type == Tstring) {
+        if (sscanf(input, "modify #%u '%256[^'\n]'", &entry_num, value_str) != 2) {
+            printf("invalid 'modify' command - wrap your string in single quotes\n");
+            return;
+        }
+        int value_strlen = strlen(value_str);
+        if (value_strlen < list->count) {
+            printf("new string value is shorter than expected - writing fewer bytes\n");
+            value_count = value_strlen;
+        }
+        else if (value_strlen > list->count) {
+            printf("new string value is longer than expected - truncating string\n");
+        }
+    }
+    union scan_value value = parse_value(value_str, list->type);
+
+    // Open the memory file for writing
+    char file_path[256];
+    snprintf(file_path, 256, "/proc/%d/mem", config.scan_pid);
+    int memory_fd = open(file_path, O_RDWR);
+    if (memory_fd == -1) {
+        perror("failed to open the /proc/PID/mem file");
+        return;
+    }
+
+    // Write the memory value at the specified address
+    int write_size = type_step(list->type) * value_count;
+    if (lseek(memory_fd, (unsigned long) list->addr, SEEK_SET) == -1) {
+        perror("could not lseek() in the memory file");
+        close(memory_fd);
+        return;
+    }
+    void* write_ptr = &value;
+    if (list->type == Tstring) {
+        write_ptr = value.Tstring;
+    }
+    if (write(memory_fd, write_ptr, write_size) != write_size) {
+        perror("failed to write() at the memory address");
+        close(memory_fd);
+        return;
     }
 
     close(memory_fd);
@@ -577,6 +649,11 @@ void help_cmd(char* input) {
         else if (strcmp(sub_cmd, "display") == 0) {
             printf("display - displays all saved memory addresses\n");
         }
+        else if (strcmp(sub_cmd, "modify") == 0) {
+            printf("modify - changes the value of a saved memory address\n");
+            printf("format: save #X VAL\n");
+            printf("writes VAL to the memory address of entry #X (as listed in 'display')\n");
+        }
         else if (strcmp(sub_cmd, "config") == 0) {
             printf("config - sets configuration\n");
             printf("format: config PARAM VALUE\n\n");
@@ -603,6 +680,7 @@ void help_cmd(char* input) {
         printf("save - saves a memory address found\n");
         printf("finish - finishes the ongoing memory scan\n");
         printf("display - displays all saved memory addresses\n");
+        printf("modify - changes the value of a saved memory address\n");
         printf("config - sets configuration\n");
         printf("help - issues a help statement - use 'help x' to find more about the command 'x'\n");
         printf("quit - exits the program\n");
