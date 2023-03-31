@@ -207,8 +207,8 @@ int main(int argc, char** argv) {
         cur_node = next;
     }
 
-    killpg(pid, SIGKILL);
     kill(dummy_pid, SIGKILL);
+    kill(0, SIGKILL); // Kill self and all descendants
 }
 
 int terminal_func() {
@@ -245,12 +245,6 @@ int child_func(char** command) {
         perror("failed to initiate ptrace()");
     }
     */
-
-    // Create new process group to kill all forked children as well
-    // Have to ignore SIGTTOU since tcsetpgrp sends it
-    signal(SIGTTOU, SIG_IGN);
-    setpgid(0, 0);
-    tcsetpgrp(STDIN_FILENO, getpgid(0));
 
     int ret = execvp(command[0], command);
     if (ret == -1) {
