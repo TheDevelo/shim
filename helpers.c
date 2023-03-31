@@ -469,3 +469,25 @@ struct scan_node* free_node(struct scan_node* node, enum scan_type type) {
     free(node);
     return next;
 }
+
+// From GNU documentation for subtracting timevals
+void print_timestamp(char* command, struct timeval* start, struct timeval* end) {
+    /* Perform the carry for the later subtraction by updating start. */
+    if (end->tv_usec < start->tv_usec) {
+        int nsec = (start->tv_usec - end->tv_usec) / 1000000 + 1;
+        start->tv_usec -= 1000000 * nsec;
+        start->tv_sec += nsec;
+    }
+    if (end->tv_usec - start->tv_usec > 1000000) {
+        int nsec = (end->tv_usec - start->tv_usec) / 1000000;
+        start->tv_usec += 1000000 * nsec;
+        start->tv_sec -= nsec;
+    }
+
+    /* Compute the time remaining to wait. tv_usec is certainly positive. */
+    long sec = end->tv_sec - start->tv_sec;
+    long usec = end->tv_usec - start->tv_usec;
+
+    // Print
+    printf("Time to execute %s: %ld.%06lds\n", command, sec, usec);
+}

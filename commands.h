@@ -60,6 +60,7 @@ struct scan_node {
 struct scan_config {
     pid_t scan_pid;
     int skip_files;
+    int timestamp;
 };
 
 struct scan_list {

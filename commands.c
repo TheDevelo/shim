@@ -661,6 +661,7 @@ void help_cmd(char* input) {
             printf("Available configuration parameters (and value):\n");
             printf("pid PID: sets the PID to scan\n");
             printf("skip_files VAL: sets whether to scan mapped files (VAL is a uint following C's truth rules)\n");
+            printf("timestamp VAL: sets whether to print timestamps (VAL is a uint following C's truth rules)\n");
         }
         else if (strcmp(sub_cmd, "help") == 0) {
             printf("help - issues a help statement\n");

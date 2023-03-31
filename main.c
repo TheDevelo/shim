@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/time.h>
 #include "commands.h"
 #include "helpers.h"
 
@@ -82,9 +83,10 @@ int main(int argc, char** argv) {
     char* input_line = NULL;
     size_t input_len = 0;
     struct scan_list scan_results = { .head = NULL, .type = Tinvalid };
-    struct scan_config config = { .scan_pid = pid, .skip_files = 1 };
+    struct scan_config config = { .scan_pid = pid, .skip_files = 1, .timestamp = 0 };
     struct save_node* save_head = NULL;
     struct save_node* save_tail = NULL;
+    struct timeval start, end;
     while (1) {
         printf("> ");
         fflush(stdout);
@@ -92,6 +94,7 @@ int main(int argc, char** argv) {
         // Parse input command
         getline(&input_line, &input_len, stdin);
         char cmd_name[256];
+        gettimeofday(&start, NULL);
         if (sscanf(input_line, "%256s", cmd_name) == 1) {
             if (strcmp(cmd_name, "find") == 0) {
                 if (scan_results.head == NULL) {
@@ -166,6 +169,16 @@ int main(int argc, char** argv) {
                         printf("skip files is now disabled\n");
                     }
                 }
+                else if (sscanf(input_line, "config timestamp %u", &value_uint) == 1) {
+                    if (value_uint) {
+                        config.timestamp = 1;
+                        printf("timestamps are now enabled\n");
+                    }
+                    else {
+                        config.timestamp = 0;
+                        printf("timestamps are now disabled\n");
+                    }
+                }
                 else {
                     printf("invalid 'config' command\n");
                 }
@@ -179,6 +192,11 @@ int main(int argc, char** argv) {
             else {
                 printf("invalid command - use 'help' to view all available commands\n");
             }
+        }
+        gettimeofday(&end, NULL);
+
+        if (config.timestamp) {
+            print_timestamp(cmd_name, &start, &end);
         }
     }
 
