@@ -234,7 +234,7 @@ int child_func(char** command) {
     setpgid(0, 0);
     tcsetpgrp(STDIN_FILENO, getpgid(0));
 
-    int ret = execvp(command[0], &command[1]);
+    int ret = execvp(command[0], command);
     if (ret == -1) {
         perror("failed to execvp() the specified command");
     }
