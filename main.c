@@ -80,6 +80,11 @@ int main(int argc, char** argv) {
     snprintf(fd_path, 256, "/proc/%d/fd/2", dummy_pid);
     freopen(fd_path, "w", stderr);
 
+    // Restart the spawned child
+    siginfo_t wait_info;
+    waitid(P_PID, pid, &wait_info, WSTOPPED);
+    ptrace(PTRACE_CONT, pid, 0, 0);
+
     // Main input loop
     char* input_line = NULL;
     size_t input_len = 0;
@@ -227,8 +232,12 @@ int main(int argc, char** argv) {
     }
 
     // Kill all child processes
-    kill(dummy_pid, SIGKILL);
-    kill(0, SIGKILL); // Kill self and all descendants
+    // Send SIGTERM to allow themselves to kill themselves gracefully instead of SIGKILL
+    // Unregister SIGTERM for self so that we can exit normally though
+    signal(SIGTERM, SIG_IGN);
+    kill(dummy_pid, SIGTERM);
+    kill(0, SIGTERM);
+    return 0;
 }
 
 int terminal_func() {
@@ -242,6 +251,7 @@ int terminal_func() {
 int dummy_func() {
     printf("shim Command Terminal\n");
 
+    // Write the dummy's PID to the FIFO
     if (access(fifo_location, W_OK) == -1) {
         perror("can't write to the FIFO");
         printf("Usage: shim COMMAND...\n");
@@ -260,11 +270,9 @@ int dummy_func() {
 
 int child_func(char** command) {
     // Initiate ptrace for the parent
-    /*
     if (ptrace(PTRACE_TRACEME, 0, NULL, NULL) == -1) {
         perror("failed to initiate ptrace()");
     }
-    */
 
     int ret = execvp(command[0], command);
     if (ret == -1) {
