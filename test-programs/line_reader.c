@@ -7,7 +7,7 @@ int main() {
     size_t len = 0;
     while (1) {
         getline(&line, &len, stdin);
-        printf("line: %sline_addr: 0x%p, len: %lu\n", line, line, len);
+        printf("line: %sline_addr: %p, len: %lu\n", line, line, len);
     }
 
     return 0;

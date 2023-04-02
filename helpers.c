@@ -85,6 +85,7 @@ enum scan_cond str_to_cond(char* cond_str) {
     }
 }
 
+// Gives size of a scan type, except for string (gives 1 character)
 int type_step(enum scan_type type) {
     switch (type) {
         case Tbyte:

@@ -80,6 +80,7 @@ int main(int argc, char** argv) {
     snprintf(fd_path, 256, "/proc/%d/fd/2", dummy_pid);
     freopen(fd_path, "w", stderr);
 
+    // Main input loop
     char* input_line = NULL;
     size_t input_len = 0;
     struct scan_list scan_results = { .head = NULL, .type = Tinvalid };
@@ -136,6 +137,19 @@ int main(int argc, char** argv) {
                 }
                 else {
                     printf("no scan is ongoing\n");
+                }
+            }
+            else if (strcmp(cmd_name, "saveaddr") == 0) {
+                struct save_node* result = saveaddr_cmd(input_line);
+                if (result != NULL) {
+                    if (save_tail == NULL) {
+                        save_head = result;
+                        save_tail = result;
+                    }
+                    else {
+                        save_tail->next = result;
+                        save_tail = result;
+                    }
                 }
             }
             else if (strcmp(cmd_name, "display") == 0) {
@@ -200,13 +214,19 @@ int main(int argc, char** argv) {
         }
     }
 
-    struct save_node* cur_node = save_head;
-    while (cur_node != NULL) {
-        struct save_node* next = cur_node->next;
-        free(cur_node);
-        cur_node = next;
+    // Clean up the scan and save nodes
+    struct save_node* cur_node_save = save_head;
+    while (cur_node_save != NULL) {
+        struct save_node* next = cur_node_save->next;
+        free(cur_node_save);
+        cur_node_save = next;
+    }
+    struct scan_node* cur_node_scan = scan_results.head;
+    while (cur_node_scan != NULL) {
+        cur_node_scan = free_node(cur_node_scan, scan_results.type);
     }
 
+    // Kill all child processes
     kill(dummy_pid, SIGKILL);
     kill(0, SIGKILL); // Kill self and all descendants
 }

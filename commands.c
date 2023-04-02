@@ -252,6 +252,7 @@ struct scan_list refine_cmd(char* input, struct scan_config config, struct scan_
             return list;
         }
     }
+    // Verify if an extra param is necesssary, and if so parse
     union scan_value extra_param;
     switch (cond) {
         case Cexists:
@@ -349,6 +350,7 @@ struct scan_list refine_cmd(char* input, struct scan_config config, struct scan_
             cur = cur->next;
         }
         else {
+            // Remove the node from the scan list
             cur = free_node(cur, type);
             parent->next = cur;
         }
@@ -375,6 +377,7 @@ struct scan_list refine_cmd(char* input, struct scan_config config, struct scan_
 }
 
 void page_cmd(char* input, struct scan_config config, struct scan_list list) {
+    // Parse the page command
     unsigned int page_num;
     if (sscanf(input, "page %u", &page_num) != 1) {
         printf("invalid 'page' command\n");
@@ -423,6 +426,7 @@ void page_cmd(char* input, struct scan_config config, struct scan_list list) {
 
         char* cur_value_str;
         if (read(memory_fd, read_buf, read_size) == -1) {
+            // Failed to read, so specify to the user
             cur_value_str = "INVALID";
         }
         else {
@@ -446,6 +450,7 @@ void page_cmd(char* input, struct scan_config config, struct scan_list list) {
 }
 
 struct save_node* save_cmd(char* input, struct scan_config config, struct scan_list list) {
+    // Parse the save command
     unsigned int entry_num;
     if (sscanf(input, "save %u", &entry_num) != 1) {
         printf("invalid 'save' command\n");
@@ -456,6 +461,7 @@ struct save_node* save_cmd(char* input, struct scan_config config, struct scan_l
         return NULL;
     }
 
+    // Retrieve the specified entry
     struct scan_node* cur_node = list.head;
     for (int i = 1; i < entry_num; i++) {
         cur_node = cur_node->next;
@@ -465,6 +471,7 @@ struct save_node* save_cmd(char* input, struct scan_config config, struct scan_l
         }
     }
 
+    // Create and return the save node
     struct save_node* result = malloc(sizeof(struct save_node));
     result->type = list.type;
     result->addr = cur_node->addr;
@@ -473,6 +480,37 @@ struct save_node* save_cmd(char* input, struct scan_config config, struct scan_l
     if (list.type == Tstring) {
         result->count = strlen(cur_node->value.Tstring);
     }
+    return result;
+}
+
+struct save_node* saveaddr_cmd(char* input) {
+    // Parse the saveaddr command
+    unsigned long address;
+    unsigned int length = 1;
+    char type_str[32];
+    if (sscanf(input, "saveaddr 0x%lx as %32s", &address, type_str) != 2) {
+        printf("invalid 'saveaddr' command\n");
+        return NULL;
+    }
+    enum scan_type type = str_to_type(type_str);
+    if (type == Tinvalid) {
+        printf("invalid 'saveaddr' command - TYPE must be a valid type\n");
+        return NULL;
+    }
+    else if (type == Tstring) {
+        // Special handling for strings
+        if (sscanf(input, "saveaddr 0x%lx as string of %u", &address, &length) != 2) {
+            printf("invalid 'saveaddr' command - string length must also be specified\n");
+            return NULL;
+        }
+    }
+
+    // Create and return the save node
+    struct save_node* result = malloc(sizeof(struct save_node));
+    result->type = type;
+    result->addr = (void*) address;
+    result->count = length;
+    result->next = NULL;
     return result;
 }
 
@@ -486,6 +524,7 @@ void display_cmd(struct scan_config config, struct save_node* list) {
         return;
     }
 
+    // Print each element of the save list
     char cur_value_buf[256];
     int entry = 1;
     printf("entry number: address - type - current value\n");
@@ -502,6 +541,7 @@ void display_cmd(struct scan_config config, struct save_node* list) {
 
         char* cur_value_str;
         if (read(memory_fd, read_buf, read_size) == -1) {
+            // Failed to read, so specify to the user
             cur_value_str = "INVALID";
         }
         else {
@@ -521,6 +561,7 @@ void display_cmd(struct scan_config config, struct save_node* list) {
 }
 
 void modify_cmd(char* input, struct scan_config config, struct save_node* list) {
+    // Parse the modify command
     unsigned int entry_num;
     char value_str[256];
     if (sscanf(input, "modify #%u %256s", &entry_num, value_str) != 2) {
@@ -595,6 +636,7 @@ void modify_cmd(char* input, struct scan_config config, struct save_node* list) 
 void help_cmd(char* input) {
     char sub_cmd[256];
     if (sscanf(input, "help %256s", sub_cmd) == 1) {
+        // Subcommand specified, print appropriate message
         if (strcmp(sub_cmd, "find") == 0) {
             printf("find - searches for memory that matches specified conditions\n");
             printf("format: find TYPE x where x CONDITION\n\n");
@@ -646,6 +688,13 @@ void help_cmd(char* input) {
         else if (strcmp(sub_cmd, "finish") == 0) {
             printf("finish - finishes the ongoing memory scan\n");
         }
+        else if (strcmp(sub_cmd, "saveaddr") == 0) {
+            printf("saveaddr - saves a given memory address\n");
+            printf("format: saveaddr 0xADDR as TYPE\n");
+            printf("saves the address at 0xADDR to the saved address list as TYPE\n");
+            printf("if TYPE is string, then a length must be specified using a special format:\n");
+            printf("saveaddr 0xADDR as string of LENGTH\n");
+        }
         else if (strcmp(sub_cmd, "display") == 0) {
             printf("display - displays all saved memory addresses\n");
         }
@@ -675,11 +724,13 @@ void help_cmd(char* input) {
         }
     }
     else {
+        // No subcommand specified, print summary for each command
         printf("find - searches for memory that matches specified conditions\n");
         printf("refine - refines the memory scan to match new conditions\n");
         printf("page - displays the current results of the ongoing memory scan\n");
         printf("save - saves a memory address found\n");
         printf("finish - finishes the ongoing memory scan\n");
+        printf("saveaddr - saves a given memory address\n");
         printf("display - displays all saved memory addresses\n");
         printf("modify - changes the value of a saved memory address\n");
         printf("config - sets configuration\n");
