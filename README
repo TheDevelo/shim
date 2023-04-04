@@ -1,0 +1,14 @@
+Source code files and their basic purposes:
+main.c - Entrypoint to shim, includes launch sequence that spawns new terminal and the tracee, setup for tracing, and the initial processing of user input. Commands are mainly delegated to commands.c
+commands.c - Functions for each sufficiently complex command. One function per command.
+commands.h - Function signatures for commands.c AND custom datatypes used for the scan information (types, conditions, scan list nodes, save list nodes)
+helpers.c - Miscellaneous helper functions, mainly dealing with functions that switch based on type or condition to clean up command processing code.
+helpers.h - Function signatures for helpers.c
+
+Testing program suite is located in test-programs/
+Test program source and descriptions:
+random.c - Prints two random integers, one stored on the heap and one on the stack. Rerandomizes and reprints values on input from stdin.
+line_reader.c - Reads a string from stdin using getline() and prints back out to the terminal.
+dense_mm.c - Adapted from CSE 422S materials, multiplies two large matrices together, once for each input from stdin. Size is specified as a command line parameter. Prints timestamps for execution time.
+string_write.c - Prints address to a string buffer, waits for input, and then writes the contents of the string buffer.
+rand_types.c - Same as random.c but includes every type shim supports except for strings, and does not allocate on the heap.
