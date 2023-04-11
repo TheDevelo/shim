@@ -1,6 +1,11 @@
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ptrace.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <sys/user.h>
 #include "commands.h"
 #include "helpers.h"
 
@@ -469,6 +474,57 @@ struct scan_node* free_node(struct scan_node* node, enum scan_type type) {
     }
     free(node);
     return next;
+}
+
+// Assume ptrace is already attached so that we can inject multiple calls in a row
+int inject_syscall(unsigned long long* syscall_retv, pid_t pid, unsigned long syscall_addr, unsigned long long syscall_no,
+        unsigned long long arg1, unsigned long long arg2, unsigned long long arg3,
+        unsigned long long arg4, unsigned long long arg5, unsigned long long arg6) {
+    // Save registers for restoration later
+    struct user_regs_struct saved_regs;
+    if (ptrace(PTRACE_GETREGS, pid, 0, &saved_regs) == -1) {
+        perror("failed to PTRACE_GETREGS");
+        return -1;
+    }
+
+    // Set registers for syscall injection
+    struct user_regs_struct inject_regs;
+    memcpy(&inject_regs, &saved_regs, sizeof(struct user_regs_struct));
+    inject_regs.rip = syscall_addr;
+    inject_regs.rax = syscall_no;
+    inject_regs.rdi = arg1;
+    inject_regs.rsi = arg2;
+    inject_regs.rdx = arg3;
+    inject_regs.r10 = arg4;
+    inject_regs.r9 = arg5;
+    inject_regs.r8 = arg6;
+    if (ptrace(PTRACE_SETREGS, pid, 0, &inject_regs) == -1) {
+        perror("failed to PTRACE_SETREGS for injection");
+        return -1;
+    }
+
+    // Inject (have to redo if stopped by a signal instead) and get return value
+    siginfo_t wait_info;
+    wait_info.si_code = CLD_CONTINUED;
+    while (wait_info.si_code != CLD_TRAPPED) {
+        if (ptrace(PTRACE_SINGLESTEP, pid, 0, 0) == -1) {
+            perror("failed to PTRACE_SINGLESTEP through syscall");
+            return -1;
+        }
+        waitid(P_PID, pid, &wait_info, WSTOPPED);
+    }
+    if (ptrace(PTRACE_GETREGS, pid, 0, &inject_regs) == -1) {
+        perror("failed to PTRACE_GETREGS after syscall");
+        return -1;
+    }
+    *syscall_retv = inject_regs.rax;
+
+    // Reset back to the initial registers
+    if (ptrace(PTRACE_SETREGS, pid, 0, &saved_regs) == -1) {
+        perror("failed to PTRACE_SETREGS for restoration");
+        return -1;
+    }
+    return 0;
 }
 
 // From GNU documentation for subtracting timevals

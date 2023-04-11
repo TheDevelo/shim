@@ -81,15 +81,15 @@ int main(int argc, char** argv) {
     freopen(fd_path, "w", stderr);
 
     // Restart the spawned child
-    siginfo_t wait_info;
-    waitid(P_PID, pid, &wait_info, WSTOPPED);
-    ptrace(PTRACE_CONT, pid, 0, 0);
+//    siginfo_t wait_info;
+//    waitid(P_PID, pid, &wait_info, WSTOPPED);
+//    ptrace(PTRACE_CONT, pid, 0, 0);
 
     // Main input loop
     char* input_line = NULL;
     size_t input_len = 0;
     struct scan_list scan_results = { .head = NULL, .type = Tinvalid };
-    struct scan_config config = { .scan_pid = pid, .skip_files = 1, .timestamp = 0 };
+    struct scan_config config = { .scan_pid = pid, .skip_files = 1, .timestamp = 0, .syscall_scan = 0 };
     struct save_node* save_head = NULL;
     struct save_node* save_tail = NULL;
     struct timeval start, end;
@@ -162,6 +162,9 @@ int main(int argc, char** argv) {
             }
             else if (strcmp(cmd_name, "modify") == 0) {
                 modify_cmd(input_line, config, save_head);
+            }
+            else if (strcmp(cmd_name, "monitor") == 0) {
+                monitor_cmd(input_line, config, save_head);
             }
             else if (strcmp(cmd_name, "finish") == 0) {
                 // Clean up the scan nodes
@@ -270,9 +273,9 @@ int dummy_func() {
 
 int child_func(char** command) {
     // Initiate ptrace for the parent
-    if (ptrace(PTRACE_TRACEME, 0, NULL, NULL) == -1) {
-        perror("failed to initiate ptrace()");
-    }
+//    if (ptrace(PTRACE_TRACEME, 0, NULL, NULL) == -1) {
+//        perror("failed to initiate ptrace()");
+//    }
 
     int ret = execvp(command[0], command);
     if (ret == -1) {
