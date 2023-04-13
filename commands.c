@@ -131,6 +131,7 @@ struct scan_list find_cmd(char* input, struct scan_config config) {
     size_t mmap_len = 0;
     struct scan_node head = { .value.Tptr = NULL, .next = NULL };
     struct scan_node* cur_node = &head;
+    unsigned long node_count = 0;
     while (getline(&mmap_line, &mmap_len, maps) != -1) {
         // Parse the memory map line
         unsigned long start_addr;
@@ -230,7 +231,7 @@ struct scan_list find_cmd(char* input, struct scan_config config) {
             int n = 0;
             for (int i = 0; i < pages; i++) {
                 if (in_core[i] == 1) {
-                    n++;
+                    n += 1;
                 }
             }
             printf("%d of %lu in core for %lx-%lx (%s)\n", n, pages, start_addr, end_addr, file_name);
@@ -274,6 +275,11 @@ struct scan_list find_cmd(char* input, struct scan_config config) {
                 }
             }
 
+            // Skip page if not in core
+            if (!in_core[addr_page]) {
+                continue;
+            }
+
             // Scan the previous page
             for (unsigned long offset = 0; offset < READ_BUF_SIZE; offset += type_step(type)) {
                 void* mem_ptr = (void*) &page[offset];
@@ -285,6 +291,7 @@ struct scan_list find_cmd(char* input, struct scan_config config) {
                         return result;
                     }
 
+                    // Save the address to the scan list
                     cur_node->next = malloc(sizeof(struct scan_node));
                     cur_node = cur_node->next;
                     cur_node->value = mem_value;
@@ -295,6 +302,7 @@ struct scan_list find_cmd(char* input, struct scan_config config) {
                         cur_node->value.Tstring = malloc(buf_len + 1);
                         strncpy(cur_node->value.Tstring, extra_param.Tstring, buf_len); // We can copy the param instead of memory since != and exists are disallowed
                     }
+                    node_count += 1;
                 }
             }
         }
@@ -307,12 +315,6 @@ struct scan_list find_cmd(char* input, struct scan_config config) {
         printf("failed to find any memory values matching the condition! aborting scan\n");
     }
     else {
-        unsigned long node_count = 0;
-        struct scan_node* cur_node = head.next;
-        while (cur_node != NULL) {
-            node_count += 1;
-            cur_node = cur_node->next;
-        }
         printf("found %lu matching values (%lu pages)\n", node_count, (node_count - 1) / 10 + 1);
     }
     printf("\n");
@@ -406,6 +408,7 @@ struct scan_list refine_cmd(char* input, struct scan_config config, struct scan_
     struct scan_node head = { .value.Tptr = NULL, .addr = NULL, .next = list.head };
     struct scan_node* parent = &head;
     struct scan_node* cur = list.head;
+    unsigned long node_count = 0;
     while (cur != NULL) {
         // Read the memory value at the specified address
         int read_size = type_step(type);
@@ -459,6 +462,7 @@ struct scan_list refine_cmd(char* input, struct scan_config config, struct scan_
             }
             parent = cur;
             cur = cur->next;
+            node_count += 1;
         }
         else {
             // Remove the node from the scan list
@@ -473,12 +477,6 @@ struct scan_list refine_cmd(char* input, struct scan_config config, struct scan_
         printf("failed to find any memory values matching the condition! aborting scan\n");
     }
     else {
-        unsigned long node_count = 0;
-        cur = head.next;
-        while (cur != NULL) {
-            node_count += 1;
-            cur = cur->next;
-        }
         printf("found %lu matching values (%lu pages)\n", node_count, (node_count - 1) / 10 + 1);
     }
     printf("\n");
