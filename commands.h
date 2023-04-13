@@ -60,7 +60,8 @@ struct scan_node {
 struct scan_config {
     pid_t scan_pid;
     int skip_files;
-    int timestamp;
+    int debug;
+    int in_core_only;
     int syscall_scan; // Used only internally for syscall_addr scanning
 };
 

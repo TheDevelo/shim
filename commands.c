@@ -30,8 +30,8 @@ const char* TYPE_STR[Tinvalid + 1] = {
 };
 
 // Global vars for easy syscall scanning
-static char* syscall_scan_cmd = "find ushort x where x == 1295"; // 1295 = 0x050f = syscall instruction in x86_64. Assume that we are running on x86_64 for symplicity
-static struct scan_config syscall_scan_config = { .scan_pid = 0, .skip_files = 0, .timestamp = 0, .syscall_scan = 1 };
+static char* syscall_scan_cmd = "find ushort x where x == 1295"; // 1295 = 0x050f = syscall instruction in x86_64. Assume that we are running on x86_64 for simplicity
+static struct scan_config syscall_scan_config = { .scan_pid = 0, .skip_files = 0, .debug = 0, .syscall_scan = 1, .in_core_only = 0 };
 
 // Also coopted by monitor to find a syscall_addr
 struct scan_list find_cmd(char* input, struct scan_config config) {
@@ -97,6 +97,19 @@ struct scan_list find_cmd(char* input, struct scan_config config) {
         extra_param = parse_value(extra_param_str, type);
     }
 
+    // Get syscall_addr if we are using ptrace for in_core_only.
+    // We do this scan every time since the scan pid may change, thus changing where syscall_addr may lie
+    unsigned long syscall_addr;
+    if (config.in_core_only) {
+        syscall_scan_config.scan_pid = config.scan_pid;
+        void* syscall_addr_ptr = find_cmd(syscall_scan_cmd, syscall_scan_config).head;
+        if (syscall_addr_ptr == NULL) {
+            printf("failed to find a syscall instruction\n");
+            return result;
+        }
+        syscall_addr = (unsigned long) syscall_addr_ptr;
+    }
+
     // Open the child's memory and the memory maps
     char file_path[256];
     snprintf(file_path, 256, "/proc/%d/maps", config.scan_pid);
@@ -154,6 +167,75 @@ struct scan_list find_cmd(char* input, struct scan_config config) {
             continue;
         }
 
+        // Get which pages are in core using mincore
+        // Don't use mincore on files since they will have data whether they've been paged or not
+        unsigned long pages = (end_addr - start_addr) / 4096;
+        char in_core[pages];
+        if (config.in_core_only && inode == 0) {
+            // Attach the ptrace instance and wait for execution to stop
+            if (ptrace(PTRACE_ATTACH, config.scan_pid, NULL, NULL) == -1) {
+                perror("failed to initiate ptrace()");
+                fclose(maps);
+                close(memory_fd);
+                return result;
+            }
+            siginfo_t wait_info;
+            waitid(P_PID, config.scan_pid, &wait_info, WSTOPPED);
+
+            // Get the stack pointer to use as a short buffer for mincore
+            // Tried using mmap to allocate new memory instead, but could not get the mmap call to go through
+            struct user_regs_struct regs;
+            ptrace(PTRACE_GETREGS, config.scan_pid, 0, &regs);
+            unsigned long mincore_buffer = regs.rsp - pages;
+
+            // Inject mincore to get which pages are in core
+            unsigned long long syscall_retv;
+            if (inject_syscall(&syscall_retv, config.scan_pid, syscall_addr, __NR_mincore, start_addr, end_addr - start_addr, mincore_buffer, 0, 0, 0) == -1) {
+                printf("failed to inject mincore() syscall to find paged addresses\n");
+                ptrace(PTRACE_DETACH, config.scan_pid, 0, 0);
+                fclose(maps);
+                close(memory_fd);
+                return result;
+            }
+
+            // Read mincore buffer into our own buffer
+            if (lseek(memory_fd, mincore_buffer, SEEK_SET) == -1) {
+                perror("could not lseek() in the memory file");
+                ptrace(PTRACE_DETACH, config.scan_pid, 0, 0);
+                fclose(maps);
+                close(memory_fd);
+                return result;
+            }
+            int read_offset = 0;
+            while (read_offset < pages) {
+                int retv = read(memory_fd, &in_core[read_offset], pages - read_offset);
+                if (retv == -1) {
+                    perror("failed to read() from memory file");
+                    ptrace(PTRACE_DETACH, config.scan_pid, 0, 0);
+                    fclose(maps);
+                    close(memory_fd);
+                    return result;
+                }
+                read_offset += retv;
+            }
+
+            // Detach the ptrace instance
+            ptrace(PTRACE_DETACH, config.scan_pid, 0, 0);
+        }
+        else {
+            memset(in_core, 1, pages);
+        }
+
+        if (config.debug) {
+            int n = 0;
+            for (int i = 0; i < pages; i++) {
+                if (in_core[i] == 1) {
+                    n++;
+                }
+            }
+            printf("%d of %lu in core for %lx-%lx (%s)\n", n, pages, start_addr, end_addr, file_name);
+        }
+
         // Search the mapped memory page by page
         // To accomadate strings across page boundaries, we have a weird scanning scheme:
         // We read the next page into memory before scanning the current page, so that any overflows go onto the next page
@@ -173,7 +255,8 @@ struct scan_list find_cmd(char* input, struct scan_config config) {
         for (unsigned long addr = start_addr; addr < end_addr; addr += READ_BUF_SIZE) {
             // Load our next page ahead
             memcpy(page, &page[READ_BUF_SIZE], READ_BUF_SIZE);
-            if (addr + READ_BUF_SIZE < end_addr) {
+            unsigned long addr_page = (addr - start_addr) / 4096;
+            if (addr + READ_BUF_SIZE < end_addr && in_core[addr_page + 1]) {
                 if (read(memory_fd, &page[READ_BUF_SIZE], READ_BUF_SIZE) == -1) {
                     perror("failed to read() from memory file");
                     printf("skipping %lx-%lx (%s) due to read failure\n", start_addr, end_addr, file_name);
@@ -182,6 +265,13 @@ struct scan_list find_cmd(char* input, struct scan_config config) {
             }
             else {
                 memset(&page[READ_BUF_SIZE], 0, READ_BUF_SIZE);
+                // lseek as well since we may be skipping over a page if its not in core
+                if (lseek(memory_fd, READ_BUF_SIZE, SEEK_CUR) == -1) {
+                    perror("could not lseek() in the memory file");
+                    fclose(maps);
+                    close(memory_fd);
+                    return result;
+                }
             }
 
             // Scan the previous page
@@ -926,7 +1016,8 @@ void help_cmd(char* input) {
             printf("Available configuration parameters (and value):\n");
             printf("pid PID: sets the PID to scan\n");
             printf("skip_files VAL: sets whether to scan mapped files (VAL is a uint following C's truth rules)\n");
-            printf("timestamp VAL: sets whether to print timestamps (VAL is a uint following C's truth rules)\n");
+            printf("debug VAL: sets whether to print debug info such as timestamps (VAL is a uint following C's truth rules)\n");
+            printf("in_core_only VAL: sets whether to skip memory pages that have not been used (VAL is a uint following C's truth rules)\n");
         }
         else if (strcmp(sub_cmd, "help") == 0) {
             printf("help - issues a help statement\n");

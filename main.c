@@ -80,16 +80,11 @@ int main(int argc, char** argv) {
     snprintf(fd_path, 256, "/proc/%d/fd/2", dummy_pid);
     freopen(fd_path, "w", stderr);
 
-    // Restart the spawned child
-//    siginfo_t wait_info;
-//    waitid(P_PID, pid, &wait_info, WSTOPPED);
-//    ptrace(PTRACE_CONT, pid, 0, 0);
-
     // Main input loop
     char* input_line = NULL;
     size_t input_len = 0;
     struct scan_list scan_results = { .head = NULL, .type = Tinvalid };
-    struct scan_config config = { .scan_pid = pid, .skip_files = 1, .timestamp = 0, .syscall_scan = 0 };
+    struct scan_config config = { .scan_pid = pid, .skip_files = 1, .debug = 0, .syscall_scan = 0, .in_core_only = 1 };
     struct save_node* save_head = NULL;
     struct save_node* save_tail = NULL;
     struct timeval start, end;
@@ -191,14 +186,24 @@ int main(int argc, char** argv) {
                         printf("skip files is now disabled\n");
                     }
                 }
-                else if (sscanf(input_line, "config timestamp %u", &value_uint) == 1) {
+                else if (sscanf(input_line, "config debug %u", &value_uint) == 1) {
                     if (value_uint) {
-                        config.timestamp = 1;
-                        printf("timestamps are now enabled\n");
+                        config.debug = 1;
+                        printf("debug is now enabled\n");
                     }
                     else {
-                        config.timestamp = 0;
-                        printf("timestamps are now disabled\n");
+                        config.debug = 0;
+                        printf("debug is now disabled\n");
+                    }
+                }
+                else if (sscanf(input_line, "config in_core_only %u", &value_uint) == 1) {
+                    if (value_uint) {
+                        config.in_core_only = 1;
+                        printf("in core only is now enabled\n");
+                    }
+                    else {
+                        config.in_core_only = 0;
+                        printf("in core only is now disabled\n");
                     }
                 }
                 else {
@@ -217,7 +222,7 @@ int main(int argc, char** argv) {
         }
         gettimeofday(&end, NULL);
 
-        if (config.timestamp) {
+        if (config.debug) {
             print_timestamp(cmd_name, &start, &end);
         }
     }
@@ -272,11 +277,6 @@ int dummy_func() {
 }
 
 int child_func(char** command) {
-    // Initiate ptrace for the parent
-//    if (ptrace(PTRACE_TRACEME, 0, NULL, NULL) == -1) {
-//        perror("failed to initiate ptrace()");
-//    }
-
     int ret = execvp(command[0], command);
     if (ret == -1) {
         perror("failed to execvp() the specified command");
