@@ -688,6 +688,56 @@ void monitor_cmd(char* input, struct scan_config config, struct save_node* list)
     }
     unsigned long syscall_addr = (unsigned long) syscall_addr_ptr;
 
+    // Open the memory map file
+    char file_path[256];
+    snprintf(file_path, 256, "/proc/%d/maps", config.scan_pid);
+    FILE* maps = fopen(file_path, "r");
+    if (maps == NULL) {
+        perror("failed to open the /proc/PID/maps file");
+        return;
+    }
+
+    // Get the permissions for the address we are looking for
+    char* mmap_line = NULL;
+    size_t mmap_len = 0;
+    char perms[4];
+    int found_perms = 0;
+    while (getline(&mmap_line, &mmap_len, maps) != -1) {
+        // Partially parse the memory map line
+        unsigned long start_addr;
+        unsigned long end_addr;
+
+        int matched = sscanf(mmap_line, "%lx-%lx %4c", &start_addr, &end_addr, perms);
+        if (matched != 3 && matched != 8) {
+            printf("malformed memory map file\n");
+            fclose(maps);
+            return;
+        }
+
+        if ((unsigned long) list->addr >= start_addr && (unsigned long) list->addr < end_addr) {
+            found_perms = 1;
+            break;
+        }
+    }
+    fclose(maps);
+    if (!found_perms) {
+        printf("failed to find the /proc/PID/maps line for the specified entry\n");
+        return;
+    }
+    int orig_perms = 0;
+    if (perms[0] == 'r') {
+        orig_perms |= PROT_READ;
+    }
+    if (perms[1] == 'w') {
+        orig_perms |= PROT_WRITE;
+    }
+    if (perms[2] == 'x') {
+        orig_perms |= PROT_EXEC;
+    }
+    if (orig_perms == 0) {
+        orig_perms = PROT_NONE;
+    }
+
     // Attach the ptrace instance and wait for execution to stop
     if (ptrace(PTRACE_ATTACH, config.scan_pid, NULL, NULL) == -1) {
         perror("failed to initiate ptrace()");
@@ -700,6 +750,7 @@ void monitor_cmd(char* input, struct scan_config config, struct save_node* list)
     unsigned long long syscall_retv;
     unsigned long page_start = (unsigned long) list->addr & ~0xfff;
     unsigned long length = (unsigned long) list->addr - page_start + type_step(list->type) * list->count;
+    unsigned long page_end = (page_start + length + 4095) & ~0xfff;
     if (inject_syscall(&syscall_retv, config.scan_pid, syscall_addr, __NR_mprotect, page_start, length, PROT_NONE, 0, 0, 0) == -1) {
         printf("failed to inject mprotect() syscall to remove permissions\n");
         ptrace(PTRACE_DETACH, config.scan_pid, 0, 0);
@@ -708,10 +759,14 @@ void monitor_cmd(char* input, struct scan_config config, struct save_node* list)
 
     printf("Press enter to finish monitoring\n");
     // Spawn child that dies when stdin is readable (signals to monitoring thread to stop)
-    // TODO: actually wait using epoll or the like, right now just monitor for 10 sec
     pid_t pid = fork();
     if (pid == 0) {
-        sleep(10);
+        char* line = NULL;
+        size_t len = 0;
+        getline(&line, &len, stdin);
+        if (line != NULL) {
+            free(line);
+        }
         exit(0);
     }
 
@@ -727,7 +782,6 @@ void monitor_cmd(char* input, struct scan_config config, struct save_node* list)
             // Caught SEGFAULT, note info and retry instruction with correct permissions
             if (wait_info.si_code == CLD_TRAPPED && wait_info.si_status == SIGSEGV) {
                 // Check if the faulty instruction is the one we are monitoring
-                // TODO: check if the instruction lies in pages affected by mprotect to see if it's a regular SEGFAULT
                 ptrace(PTRACE_GETSIGINFO, config.scan_pid, 0, &wait_info);
                 if (wait_info.si_addr == list->addr) {
                     // Record the address that tripped the monitor
@@ -735,9 +789,13 @@ void monitor_cmd(char* input, struct scan_config config, struct save_node* list)
                     ptrace(PTRACE_GETREGS, config.scan_pid, 0, &saved_regs);
                     printf("monitor intercepted at 0x%llx\n", saved_regs.rip);
                 }
+                else if ((unsigned long) wait_info.si_addr < page_start || (unsigned long) wait_info.si_addr >= page_end) {
+                    // Lies outside the pages we are monitoring, so pass SEGFAULT back to process
+                    ptrace(PTRACE_CONT, config.scan_pid, NULL, SIGSEGV);
+                }
 
                 // Restore permissions to the given page
-                if (inject_syscall(&syscall_retv, config.scan_pid, syscall_addr, __NR_mprotect, page_start, length, PROT_READ | PROT_WRITE | PROT_EXEC, 0, 0, 0) == -1) {
+                if (inject_syscall(&syscall_retv, config.scan_pid, syscall_addr, __NR_mprotect, page_start, length, orig_perms, 0, 0, 0) == -1) {
                     printf("failed to inject mprotect() syscall to restore permissions\n");
                     ptrace(PTRACE_DETACH, config.scan_pid, 0, 0);
                     return;
@@ -768,20 +826,22 @@ void monitor_cmd(char* input, struct scan_config config, struct save_node* list)
         }
     }
 
-    // Make sure the traced program is stopped no matter what
-    kill(config.scan_pid, SIGSTOP);
+    // Setup tracee for syscall injection
+    // DONT ASK WHY I DO A PTRACE_CONT HERE, it just doesn't work without it (crashes complex programs like Celeste)
+    ptrace(PTRACE_INTERRUPT, config.scan_pid, 0, 0);
+    waitid(P_PID, config.scan_pid, &wait_info, WSTOPPED | WEXITED);
+    ptrace(PTRACE_CONT, config.scan_pid, NULL, NULL);
     waitid(P_PID, config.scan_pid, &wait_info, WSTOPPED | WEXITED);
 
     // Restore permissions to the given page
-    // TODO: currently gives full perms as we don't know the initial conditions, figure out how to get the initial perms
-    if (inject_syscall(&syscall_retv, config.scan_pid, syscall_addr, __NR_mprotect, page_start, length, PROT_READ | PROT_WRITE | PROT_EXEC, 0, 0, 0) == -1) {
+    if (inject_syscall(&syscall_retv, config.scan_pid, syscall_addr, __NR_mprotect, page_start, length, orig_perms, 0, 0, 0) == -1) {
         printf("failed to inject mprotect() syscall to restore permissions\n");
         ptrace(PTRACE_DETACH, config.scan_pid, 0, 0);
         return;
     }
 
     // Detach the process to end ptrace tracing
-    ptrace(PTRACE_DETACH, config.scan_pid, 0, 0);
+    ptrace(PTRACE_DETACH, config.scan_pid, NULL, NULL);
 }
 
 void help_cmd(char* input) {
@@ -851,8 +911,13 @@ void help_cmd(char* input) {
         }
         else if (strcmp(sub_cmd, "modify") == 0) {
             printf("modify - changes the value of a saved memory address\n");
-            printf("format: save #X VAL\n");
+            printf("format: modify #X VAL\n");
             printf("writes VAL to the memory address of entry #X (as listed in 'display')\n");
+        }
+        else if (strcmp(sub_cmd, "monitor") == 0) {
+            printf("monitor - monitors a saved memory address for reads and writes\n");
+            printf("format: monitor #X\n");
+            printf("monitors the address of entry #X for reads and writes\n");
         }
         else if (strcmp(sub_cmd, "config") == 0) {
             printf("config - sets configuration\n");
@@ -884,6 +949,7 @@ void help_cmd(char* input) {
         printf("saveaddr - saves a given memory address\n");
         printf("display - displays all saved memory addresses\n");
         printf("modify - changes the value of a saved memory address\n");
+        printf("monitor - monitors a saved memory address for reads and writes\n");
         printf("config - sets configuration\n");
         printf("help - issues a help statement - use 'help x' to find more about the command 'x'\n");
         printf("quit - exits the program\n");
