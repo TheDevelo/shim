@@ -69,7 +69,7 @@ int main( int argc, char* argv[] ){
     C = (double*) malloc( sizeof(double) * squared_size );
 
     printf("dense_mm matrix multiply\n");
-    printf("matrix locations - A: 0x%p, B: 0x%p, C: 0x%p\n", A, B, C);
+    printf("matrix locations - A: %p, B: %p, C: %p\n", A, B, C);
 
     while (getc(stdin) != EOF) {
         printf("Generating matrices...\n");

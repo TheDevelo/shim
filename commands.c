@@ -869,39 +869,117 @@ void monitor_cmd(char* input, struct scan_config config, struct save_node* list)
         else if (wait_info.si_pid == config.scan_pid) {
             // Caught SEGFAULT, note info and retry instruction with correct permissions
             if (wait_info.si_code == CLD_TRAPPED && wait_info.si_status == SIGSEGV) {
-                // Check if the faulty instruction is the one we are monitoring
+                // Check if the faulting address is the one we are monitoring
                 ptrace(PTRACE_GETSIGINFO, config.scan_pid, 0, &wait_info);
                 if (wait_info.si_addr == list->addr) {
                     // Record the address that tripped the monitor
                     struct user_regs_struct saved_regs;
                     ptrace(PTRACE_GETREGS, config.scan_pid, 0, &saved_regs);
-                    printf("monitor intercepted at 0x%llx\n", saved_regs.rip);
+
+                    // Check if the tripping instruction is a read, write, or exec by restoring the
+                    // permissions one by one until we successfully execute the desired instruction
+                    int found_cause = 0;
+                    if (orig_perms & PROT_READ) {
+                        // Restore read permissions to page and re-execute
+                        if (inject_syscall(&syscall_retv, config.scan_pid, syscall_addr, __NR_mprotect, page_start, length, PROT_READ, 0, 0, 0) == -1) {
+                            printf("failed to inject mprotect() syscall to restore permissions\n");
+                            ptrace(PTRACE_DETACH, config.scan_pid, 0, 0);
+                            return;
+                        }
+                        ptrace(PTRACE_SINGLESTEP, config.scan_pid, NULL, NULL);
+                        waitid(P_PID, config.scan_pid, &wait_info, WSTOPPED);
+
+                        // Check if we successfully executed or SEGFAULTed again
+                        if (wait_info.si_code == CLD_TRAPPED && wait_info.si_status != SIGSEGV) {
+                            found_cause = 1;
+                            printf("read intercepted at 0x%llx\n", saved_regs.rip);
+                        }
+                    }
+                    if (!found_cause && orig_perms & PROT_WRITE) {
+                        // Restore write permissions to page and re-execute
+                        if (inject_syscall(&syscall_retv, config.scan_pid, syscall_addr, __NR_mprotect, page_start, length, PROT_WRITE, 0, 0, 0) == -1) {
+                            printf("failed to inject mprotect() syscall to restore permissions\n");
+                            ptrace(PTRACE_DETACH, config.scan_pid, 0, 0);
+                            return;
+                        }
+                        ptrace(PTRACE_SINGLESTEP, config.scan_pid, NULL, NULL);
+                        waitid(P_PID, config.scan_pid, &wait_info, WSTOPPED);
+
+                        // Check if we successfully executed or SEGFAULTed again
+                        if (wait_info.si_code == CLD_TRAPPED && wait_info.si_status != SIGSEGV) {
+                            found_cause = 1;
+                            printf("write intercepted at 0x%llx\n", saved_regs.rip);
+                        }
+                    }
+                    if (!found_cause && orig_perms & PROT_EXEC) {
+                        // Restore exec permissions to page and re-execute
+                        // The executing instruction may also read or write, so just restore to original perms (already checked read and write)
+                        if (inject_syscall(&syscall_retv, config.scan_pid, syscall_addr, __NR_mprotect, page_start, length, orig_perms, 0, 0, 0) == -1) {
+                            printf("failed to inject mprotect() syscall to restore permissions\n");
+                            ptrace(PTRACE_DETACH, config.scan_pid, 0, 0);
+                            return;
+                        }
+                        ptrace(PTRACE_SINGLESTEP, config.scan_pid, NULL, NULL);
+                        waitid(P_PID, config.scan_pid, &wait_info, WSTOPPED);
+
+                        // Check if we successfully executed or SEGFAULTed again
+                        if (wait_info.si_code == CLD_TRAPPED && wait_info.si_status != SIGSEGV) {
+                            found_cause = 1;
+                            printf("exec intercepted at 0x%llx\n", saved_regs.rip);
+                        }
+                    }
+
+                    // Remove permissions for future monitoring events
+                    if (inject_syscall(&syscall_retv, config.scan_pid, syscall_addr, __NR_mprotect, page_start, length, PROT_NONE, 0, 0, 0) == -1) {
+                        printf("failed to inject mprotect() syscall to remove permissions\n");
+                        ptrace(PTRACE_DETACH, config.scan_pid, 0, 0);
+                        return;
+                    }
+
+                    // Resume execution
+                    // If we can't find the cause, must be real SEGFAULT, so forward
+                    if (!found_cause) {
+                        printf("failed to find cause of SEGFAULT for monitored instruction\n");
+                        ptrace(PTRACE_CONT, config.scan_pid, NULL, SIGSEGV);
+                    }
+                    else {
+                        ptrace(PTRACE_CONT, config.scan_pid, NULL, NULL);
+                    }
                 }
-                else if ((unsigned long) wait_info.si_addr < page_start || (unsigned long) wait_info.si_addr >= page_end) {
+                else if ((unsigned long) wait_info.si_addr >= page_start && (unsigned long) wait_info.si_addr < page_end) {
+                    // Caught address is in affected page but is not monitored
+                    // Restore permissions to the given page
+                    if (inject_syscall(&syscall_retv, config.scan_pid, syscall_addr, __NR_mprotect, page_start, length, orig_perms, 0, 0, 0) == -1) {
+                        printf("failed to inject mprotect() syscall to restore permissions\n");
+                        ptrace(PTRACE_DETACH, config.scan_pid, 0, 0);
+                        return;
+                    }
+
+                    // Re-execute the failed instruction
+                    ptrace(PTRACE_SINGLESTEP, config.scan_pid, NULL, NULL);
+                    waitid(P_PID, config.scan_pid, &wait_info, WSTOPPED);
+
+                    // Remove permissions for future monitoring events
+                    if (inject_syscall(&syscall_retv, config.scan_pid, syscall_addr, __NR_mprotect, page_start, length, PROT_NONE, 0, 0, 0) == -1) {
+                        printf("failed to inject mprotect() syscall to remove permissions\n");
+                        ptrace(PTRACE_DETACH, config.scan_pid, 0, 0);
+                        return;
+                    }
+
+                    // Resume execution
+                    // If we SEGFAULTed again, must be real SEGFAULT, so forward
+                    if (wait_info.si_code == CLD_TRAPPED && wait_info.si_status == SIGSEGV) {
+                        printf("failed to find cause of SEGFAULT for monitored instruction\n");
+                        ptrace(PTRACE_CONT, config.scan_pid, NULL, SIGSEGV);
+                    }
+                    else {
+                        ptrace(PTRACE_CONT, config.scan_pid, NULL, NULL);
+                    }
+                }
+                else {
                     // Lies outside the pages we are monitoring, so pass SEGFAULT back to process
                     ptrace(PTRACE_CONT, config.scan_pid, NULL, SIGSEGV);
                 }
-
-                // Restore permissions to the given page
-                if (inject_syscall(&syscall_retv, config.scan_pid, syscall_addr, __NR_mprotect, page_start, length, orig_perms, 0, 0, 0) == -1) {
-                    printf("failed to inject mprotect() syscall to restore permissions\n");
-                    ptrace(PTRACE_DETACH, config.scan_pid, 0, 0);
-                    return;
-                }
-
-                // Re-execute the failed instruction
-                ptrace(PTRACE_SINGLESTEP, config.scan_pid, NULL, NULL);
-                waitid(P_PID, config.scan_pid, &wait_info, WSTOPPED);
-
-                // Remove permissions for future monitoring events
-                if (inject_syscall(&syscall_retv, config.scan_pid, syscall_addr, __NR_mprotect, page_start, length, PROT_NONE, 0, 0, 0) == -1) {
-                    printf("failed to inject mprotect() syscall to remove permissions\n");
-                    ptrace(PTRACE_DETACH, config.scan_pid, 0, 0);
-                    return;
-                }
-
-                // Resume execution
-                ptrace(PTRACE_CONT, config.scan_pid, NULL, NULL);
             }
             // Caught anything other than SEGFAULT, forward to the program
             else if (wait_info.si_code == CLD_TRAPPED) {
@@ -913,12 +991,12 @@ void monitor_cmd(char* input, struct scan_config config, struct save_node* list)
             }
         }
     }
+    kill(pid, SIGTERM); // Kill stdin reader in case the monitor loop exists unnaturally
 
-    // Setup tracee for syscall injection
-    // DONT ASK WHY I DO A PTRACE_CONT HERE, it just doesn't work without it (crashes complex programs like Celeste)
-    ptrace(PTRACE_INTERRUPT, config.scan_pid, 0, 0);
-    waitid(P_PID, config.scan_pid, &wait_info, WSTOPPED | WEXITED);
-    ptrace(PTRACE_CONT, config.scan_pid, NULL, NULL);
+    // Setup tracee for syscall injection by interrupting using a signal
+    // The signal doesn't actually get sent through to the tracee as we singlestep afterwards without forwarding
+    kill(config.scan_pid, SIGTERM);
+    ptrace(PTRACE_SINGLESTEP, config.scan_pid, NULL, NULL);
     waitid(P_PID, config.scan_pid, &wait_info, WSTOPPED | WEXITED);
 
     // Restore permissions to the given page
