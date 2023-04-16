@@ -1,4 +1,4 @@
-cc-args = -g
+cc-args = -O3
 
 all: shim
 

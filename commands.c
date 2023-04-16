@@ -355,15 +355,6 @@ struct scan_list refine_cmd(char* input, struct scan_config config, struct scan_
         }
         // Rescan input if string to force quotes and include whitespace in the following string
         matched = sscanf(input, "refine x %32s '%256[^'\n]'", cond_str, extra_param_str);
-        if (matched != 2) {
-            printf("invalid condition specified - wrap your string in single quotes\n");
-            return list;
-        }
-        // Must actually specify some kind of string
-        if (strlen(extra_param_str) == 0) {
-            printf("invalid condition specified - provide a non-empty string\n");
-            return list;
-        }
     }
     // Verify if an extra param is necesssary, and if so parse
     union scan_value extra_param;
@@ -385,9 +376,22 @@ struct scan_list refine_cmd(char* input, struct scan_config config, struct scan_
         case Cgeq:
         case Cleq:
         default:
-            if (matched != 2) {
-                printf("invalid condition specified - %s requires an extra parameter\n", cond_str);
-                return list;
+            if (type == Tstring) {
+                if (matched != 2) {
+                    printf("invalid condition specified - wrap your string in single quotes\n");
+                    return list;
+                }
+                // Must actually specify some kind of string
+                if (strlen(extra_param_str) == 0) {
+                    printf("invalid condition specified - provide a non-empty string\n");
+                    return list;
+                }
+            }
+            else {
+                if (matched != 2) {
+                    printf("invalid condition specified - %s requires an extra parameter\n", cond_str);
+                    return list;
+                }
             }
             extra_param = parse_value(extra_param_str, type);
             break;
@@ -409,31 +413,53 @@ struct scan_list refine_cmd(char* input, struct scan_config config, struct scan_
     struct scan_node* parent = &head;
     struct scan_node* cur = list.head;
     unsigned long node_count = 0;
+    char page_cache[READ_BUF_SIZE + 1];
+    unsigned long cache_addr = 0;
     while (cur != NULL) {
         // Read the memory value at the specified address
-        int read_size = type_step(type);
+        int read_size = 0;
         if (type == Tstring) {
             read_size = strlen(cur->value.Tstring);
         }
-        char read_buf[read_size + 1];
-        read_buf[read_size] = '\0'; // Add null-terminator for strings
-        if (lseek(memory_fd, (unsigned long) cur->addr, SEEK_SET) == -1) {
-            perror("could not lseek() in the memory file, aborting scan");
-            close(memory_fd);
-            list.head = NULL;
-            return list;
+        page_cache[read_size] = '\0'; // Add null-terminator for strings
+
+        // Use a page cache for non-strings. Don't need to check if address is below cache since the list is ordered by address
+        // For strings, variables are set up for a normal buffer read
+        int cache_miss = 1;
+        unsigned long read_addr = (unsigned long) cur->addr;
+        char* read_buf = page_cache;
+        if (type != Tstring && read_addr >= cache_addr + READ_BUF_SIZE) {
+            // Set read_addr to read the appropriate page in order to not possibly overflow into a non-readable page
+            cache_miss = 1;
+            read_addr &= ~0xfff;
+            read_size = READ_BUF_SIZE;
+            cache_addr = read_addr;
+        }
+        else if (type != Tstring) {
+            // Update pointer to appropriate location in cache
+            cache_miss = 0;
+            read_buf = &page_cache[read_addr - cache_addr];
         }
 
-        if (read(memory_fd, read_buf, read_size) == -1) {
-            // Failed to read address from file, remove from the list
-            printf("failed to read at 0x%p, removing\n", cur->addr);
-            cur = free_node(cur, type);
-            parent->next = cur;
-            continue;
+        if (cache_miss) {
+            if (lseek(memory_fd, read_addr, SEEK_SET) == -1) {
+                perror("could not lseek() in the memory file, aborting scan");
+                close(memory_fd);
+                list.head = NULL;
+                return list;
+            }
+
+            if (read(memory_fd, read_buf, read_size) == -1) {
+                // Failed to read address from file, remove from the list
+                printf("failed to read at 0x%p, removing\n", cur->addr);
+                cur = free_node(cur, type);
+                parent->next = cur;
+                continue;
+            }
         }
 
         // Test value against condition
-        union scan_value read_value = mem_to_value(&read_buf, type);
+        union scan_value read_value = mem_to_value(read_buf, type);
         union scan_value cond_param;
         switch (cond) {
             case Ceq:
@@ -455,10 +481,13 @@ struct scan_list refine_cmd(char* input, struct scan_config config, struct scan_
         }
         if (satisfies_condition(read_value, type, cond, cond_param)) {
             // Update the node's value
-            cur->value = read_value;
             if (type == Tstring) {
+                free(cur->value.Tstring);
                 cur->value.Tstring = malloc(read_size + 1);
-                strncpy(cur->value.Tstring, read_value.Tstring, read_size); // We can copy the param instead of memory since != and exists are disallowed
+                strncpy(cur->value.Tstring, read_value.Tstring, read_size);
+            }
+            else {
+                cur->value = read_value;
             }
             parent = cur;
             cur = cur->next;
