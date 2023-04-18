@@ -85,4 +85,5 @@ struct save_node* saveaddr_cmd(char* input);
 void display_cmd(struct scan_config config, struct save_node* list);
 void modify_cmd(char* input, struct scan_config config, struct save_node* list);
 void monitor_cmd(char* input, struct scan_config config, struct save_node* list);
+void lookup_cmd(char* input, struct scan_config config);
 void help_cmd(char* input);

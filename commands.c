@@ -420,17 +420,18 @@ struct scan_list refine_cmd(char* input, struct scan_config config, struct scan_
         int read_size = 0;
         if (type == Tstring) {
             read_size = strlen(cur->value.Tstring);
+            page_cache[read_size] = '\0'; // Add null-terminator
         }
-        page_cache[read_size] = '\0'; // Add null-terminator for strings
 
         // Use a page cache for non-strings. Don't need to check if address is below cache since the list is ordered by address
         // For strings, variables are set up for a normal buffer read
         int cache_miss = 1;
         unsigned long read_addr = (unsigned long) cur->addr;
-        char* read_buf = page_cache;
+        char* mem_buf = page_cache;
         if (type != Tstring && read_addr >= cache_addr + READ_BUF_SIZE) {
             // Set read_addr to read the appropriate page in order to not possibly overflow into a non-readable page
             cache_miss = 1;
+            mem_buf = &page_cache[read_addr & 0xfff]; // In case first miss is not the first address of page, need to move mem_buf into middle of cache
             read_addr &= ~0xfff;
             read_size = READ_BUF_SIZE;
             cache_addr = read_addr;
@@ -438,7 +439,7 @@ struct scan_list refine_cmd(char* input, struct scan_config config, struct scan_
         else if (type != Tstring) {
             // Update pointer to appropriate location in cache
             cache_miss = 0;
-            read_buf = &page_cache[read_addr - cache_addr];
+            mem_buf = &page_cache[read_addr - cache_addr];
         }
 
         if (cache_miss) {
@@ -449,7 +450,7 @@ struct scan_list refine_cmd(char* input, struct scan_config config, struct scan_
                 return list;
             }
 
-            if (read(memory_fd, read_buf, read_size) == -1) {
+            if (read(memory_fd, page_cache, read_size) == -1) {
                 // Failed to read address from file, remove from the list
                 printf("failed to read at 0x%p, removing\n", cur->addr);
                 cur = free_node(cur, type);
@@ -459,7 +460,7 @@ struct scan_list refine_cmd(char* input, struct scan_config config, struct scan_
         }
 
         // Test value against condition
-        union scan_value read_value = mem_to_value(read_buf, type);
+        union scan_value read_value = mem_to_value(mem_buf, type);
         union scan_value cond_param;
         switch (cond) {
             case Ceq:
@@ -1039,6 +1040,63 @@ void monitor_cmd(char* input, struct scan_config config, struct save_node* list)
     ptrace(PTRACE_DETACH, config.scan_pid, NULL, NULL);
 }
 
+void lookup_cmd(char* input, struct scan_config config) {
+    // Parse the lookup command
+    unsigned long address;
+    if (sscanf(input, "lookup 0x%lx", &address) != 1) {
+        printf("invalid 'lookup' command\n");
+        return;
+    }
+
+    // Open the memory map file
+    char file_path[256];
+    snprintf(file_path, 256, "/proc/%d/maps", config.scan_pid);
+    FILE* maps = fopen(file_path, "r");
+    if (maps == NULL) {
+        perror("failed to open the /proc/PID/maps file");
+        return;
+    }
+
+    // Get the permissions for the address we are looking for
+    char* mmap_line = NULL;
+    size_t mmap_len = 0;
+    int matched = 0;
+    int found_addr = 0;
+    while (getline(&mmap_line, &mmap_len, maps) != -1) {
+        // Parse the memory map line
+        unsigned long start_addr;
+        unsigned long end_addr;
+        char perms[4];
+        unsigned long offset;
+        unsigned int major_id;
+        unsigned int minor_id;
+        unsigned int inode;
+        char file_name[4096];
+        file_name[0] = '\0'; // Set string to empty in case there is no file name in the mmap line
+
+        matched = sscanf(mmap_line, "%lx-%lx %4c %lx %x:%x %u %4096[^\n]", &start_addr, &end_addr, perms, &offset, &major_id, &minor_id, &inode, file_name);
+        if (matched != 7 && matched != 8) {
+            printf("malformed memory map file\n");
+            fclose(maps);
+            return;
+        }
+
+        if (address >= start_addr && address < end_addr) {
+            printf("0x%lx located within %lx-%lx (%s)\n", address, start_addr, end_addr, file_name);
+            if (inode != 0) {
+                printf("corresponds to 0x%lx in file %s\n", address - start_addr + offset, file_name);
+            }
+            found_addr = 1;
+            break;
+        }
+    }
+    fclose(maps);
+
+    if (!found_addr) {
+        printf("failed to find address in /proc/PID/maps file\n");
+    }
+}
+
 void help_cmd(char* input) {
     char sub_cmd[256];
     if (sscanf(input, "help %256s", sub_cmd) == 1) {
@@ -1114,6 +1172,11 @@ void help_cmd(char* input) {
             printf("format: monitor #X\n");
             printf("monitors the address of entry #X for reads and writes\n");
         }
+        else if (strcmp(sub_cmd, "lookup") == 0) {
+            printf("lookup - finds the memory region for a given address\n");
+            printf("format: lookup 0xADDR\n");
+            printf("also finds the location within the backing file if the region is file-backed\n");
+        }
         else if (strcmp(sub_cmd, "config") == 0) {
             printf("config - sets configuration\n");
             printf("format: config PARAM VALUE\n\n");
@@ -1146,6 +1209,7 @@ void help_cmd(char* input) {
         printf("display - displays all saved memory addresses\n");
         printf("modify - changes the value of a saved memory address\n");
         printf("monitor - monitors a saved memory address for reads and writes\n");
+        printf("lookup - finds the memory region for a given address\n");
         printf("config - sets configuration\n");
         printf("help - issues a help statement - use 'help x' to find more about the command 'x'\n");
         printf("quit - exits the program\n");

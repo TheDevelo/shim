@@ -73,11 +73,11 @@ int main(int argc, char** argv) {
 
     // Overwrite the stdout, stdin, and stderr fds so that we write to the new terminal
     char fd_path[256];
-    snprintf(fd_path, 256, "/proc/%d/fd/0", dummy_pid);
-    freopen(fd_path, "w", stdout);
-    snprintf(fd_path, 256, "/proc/%d/fd/1", dummy_pid);
+    snprintf(fd_path, 256, "/proc/%d/fd/%d", dummy_pid, STDIN_FILENO);
     freopen(fd_path, "r", stdin);
-    snprintf(fd_path, 256, "/proc/%d/fd/2", dummy_pid);
+    snprintf(fd_path, 256, "/proc/%d/fd/%d", dummy_pid, STDOUT_FILENO);
+    freopen(fd_path, "w", stdout);
+    snprintf(fd_path, 256, "/proc/%d/fd/%d", dummy_pid, STDERR_FILENO);
     freopen(fd_path, "w", stderr);
 
     // Main input loop
@@ -160,6 +160,9 @@ int main(int argc, char** argv) {
             }
             else if (strcmp(cmd_name, "monitor") == 0) {
                 monitor_cmd(input_line, config, save_head);
+            }
+            else if (strcmp(cmd_name, "lookup") == 0) {
+                lookup_cmd(input_line, config);
             }
             else if (strcmp(cmd_name, "finish") == 0) {
                 // Clean up the scan nodes
