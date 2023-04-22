@@ -999,7 +999,7 @@ void monitor_cmd(char* input, struct scan_config config, struct save_node* list)
                     // Resume execution
                     // If we SEGFAULTed again, must be real SEGFAULT, so forward
                     if (wait_info.si_code == CLD_TRAPPED && wait_info.si_status == SIGSEGV) {
-                        printf("failed to find cause of SEGFAULT for monitored instruction\n");
+                        printf("natural SEGFAULT occurred, forwarding to the tracee\n");
                         ptrace(PTRACE_CONT, config.scan_pid, NULL, SIGSEGV);
                     }
                     else {
@@ -1008,6 +1008,7 @@ void monitor_cmd(char* input, struct scan_config config, struct save_node* list)
                 }
                 else {
                     // Lies outside the pages we are monitoring, so pass SEGFAULT back to process
+                    printf("natural SEGFAULT occurred, forwarding to the tracee\n");
                     ptrace(PTRACE_CONT, config.scan_pid, NULL, SIGSEGV);
                 }
             }
@@ -1022,6 +1023,20 @@ void monitor_cmd(char* input, struct scan_config config, struct save_node* list)
         }
     }
     kill(pid, SIGTERM); // Kill stdin reader in case the monitor loop exists unnaturally
+
+    // Return if the program was killed/exited naturally, printing out an appropriate message
+    if (wait_info.si_pid == config.scan_pid && wait_info.si_code == CLD_EXITED) {
+        printf("tracee exited with a status of %d\n", wait_info.si_status);
+        return;
+    }
+    else if (wait_info.si_pid == config.scan_pid && wait_info.si_code == CLD_KILLED) {
+        printf("tracee killed by signal %s\n", strsignal(wait_info.si_status));
+        return;
+    }
+    else if (wait_info.si_pid == config.scan_pid && wait_info.si_code == CLD_DUMPED) {
+        printf("tracee killed and coredumped by signal %s\n", strsignal(wait_info.si_status));
+        return;
+    }
 
     // Setup tracee for syscall injection by interrupting using a signal
     // The signal doesn't actually get sent through to the tracee as we singlestep afterwards without forwarding

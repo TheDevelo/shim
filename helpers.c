@@ -253,7 +253,7 @@ char* value_to_str(union scan_value value, enum scan_type type, char* output_buf
             snprintf(output_buffer, buf_len, "%lf", value.Tdouble);
             return output_buffer;
         case Tptr:
-            snprintf(output_buffer, buf_len, "0x%p", value.Tptr);
+            snprintf(output_buffer, buf_len, "%p", value.Tptr);
             return output_buffer;
         case Tstring:
             return value.Tstring;

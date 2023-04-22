@@ -1,4 +1,4 @@
-all: random line_reader dense_mm string_write rand_types
+all: random line_reader dense_mm string_write rand_types segfault
 
 random: random.c
 	cc -o build/random random.c
@@ -14,6 +14,9 @@ string_write: string_write.c
 
 rand_types: rand_types.c
 	cc -o build/rand_types rand_types.c
+
+segfault: segfault.c
+	cc -o build/segfault segfault.c
 
 clean:
 	rm -rf build
