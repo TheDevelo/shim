@@ -64,9 +64,9 @@ int main( int argc, char* argv[] ){
     }
 
     squared_size = matrix_size * matrix_size;
-    A = (double*) malloc( sizeof(double) * squared_size );
-    B = (double*) malloc( sizeof(double) * squared_size );
-    C = (double*) malloc( sizeof(double) * squared_size );
+    A = (double*) malloc( sizeof(double) * squared_size * 4 );
+    B = (double*) malloc( sizeof(double) * squared_size * 4);
+    C = (double*) malloc( sizeof(double) * squared_size * 4);
 
     printf("dense_mm matrix multiply\n");
     printf("matrix locations - A: %p, B: %p, C: %p\n", A, B, C);
