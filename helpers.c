@@ -9,6 +9,7 @@
 #include "commands.h"
 #include "helpers.h"
 
+// Converts a string to its equivalent type enum value
 enum scan_type str_to_type(char* type_str) {
     if (strcmp(type_str, "byte") == 0) {
         return Tbyte;
@@ -51,6 +52,7 @@ enum scan_type str_to_type(char* type_str) {
     }
 }
 
+// Converts a string to its equivalent condition enum value
 enum scan_cond str_to_cond(char* cond_str) {
     if (strcmp(cond_str, "==") == 0) {
         return Ceq;
@@ -90,7 +92,7 @@ enum scan_cond str_to_cond(char* cond_str) {
     }
 }
 
-// Gives size of a scan type, except for string (gives 1 character)
+// Gives size of a scan type, except for string (gives size of 1 character)
 int type_step(enum scan_type type) {
     switch (type) {
         case Tbyte:
@@ -119,10 +121,14 @@ int type_step(enum scan_type type) {
             return sizeof(char);
         case Tinvalid:
         default:
+            // This value doesn't really matter as we should NEVER have a case
+            // where this function is called with Tinvalid, but keep it READ_BUF_SIZE
+            // so that it skips over the full page as fast as possible in find.
             return READ_BUF_SIZE;
     }
 }
 
+// Parses a string to a scan_value union as the desired type
 union scan_value parse_value(char* value_str, enum scan_type type) {
     union scan_value result;
     switch (type) {
@@ -171,6 +177,7 @@ union scan_value parse_value(char* value_str, enum scan_type type) {
     return result;
 }
 
+// Interprets the memory at mem as if it were the specified type, and then saves it to a scan_value union
 union scan_value mem_to_value(void* mem, enum scan_type type) {
     union scan_value result;
     switch (type) {
@@ -218,6 +225,7 @@ union scan_value mem_to_value(void* mem, enum scan_type type) {
     return result;
 }
 
+// Converts a scan_value union to a string
 // Return a char* since for Tstring we can just return the attached string buffer
 // Avoids copying the string over to the output buffer
 char* value_to_str(union scan_value value, enum scan_type type, char* output_buffer, size_t buf_len) {
@@ -263,13 +271,16 @@ char* value_to_str(union scan_value value, enum scan_type type, char* output_buf
     }
 }
 
+// Checks if a value satisfies a specified condition
 // Oh boy do I love not having generics at times like these :)
+// Would have been nice to implement this in Rust, but too late now.
 int satisfies_condition(union scan_value value, enum scan_type type, enum scan_cond cond, union scan_value cond_value) {
-    // Can simplify a bit going cond first since exists is always true, and the temporal conditions are the same as their non-temporal counterparts
+    // Can simplify a bit going cond first since exists is always true, and the temporal conditions are the same as their non-temporal counterparts (only change is cond_value)
     // Could also use inversion to reduce 3 cases, but that leads to invalid results for invalid inputs (might have been worth it to ignore though)
     switch (cond) {
         case Ceq:
         case Csame:
+            // == Case
             switch (type) {
                 case Tbyte:
                     return value.Tbyte == cond_value.Tbyte;
@@ -294,7 +305,7 @@ int satisfies_condition(union scan_value value, enum scan_type type, enum scan_c
                 case Tptr:
                     return value.Tptr == cond_value.Tptr;
                 case Tstring:
-                    // Compare character by character going by cond_value, so value doesn't have to be a valid string to work
+                    // Compare character by character going by cond_value, so value doesn't have to be a valid string to work (instead of strcmp)
                     // Decided not to include the null-terminator to allow for substring search
                     // Could theoretically run into overflow issues, but should be fixed by the special reading case for strings
                     int end_offset = strlen(cond_value.Tstring);
@@ -309,6 +320,7 @@ int satisfies_condition(union scan_value value, enum scan_type type, enum scan_c
             }
         case Cneq:
         case Cdiff:
+            // != case
             switch (type) {
                 case Tbyte:
                     return value.Tbyte != cond_value.Tbyte;
@@ -346,6 +358,7 @@ int satisfies_condition(union scan_value value, enum scan_type type, enum scan_c
             }
         case Cgreater:
         case Cabove:
+            // > case
             switch (type) {
                 case Tbyte:
                     return value.Tbyte > cond_value.Tbyte;
@@ -375,6 +388,7 @@ int satisfies_condition(union scan_value value, enum scan_type type, enum scan_c
             }
         case Cless:
         case Cbelow:
+            // < case
             switch (type) {
                 case Tbyte:
                     return value.Tbyte < cond_value.Tbyte;
@@ -403,6 +417,7 @@ int satisfies_condition(union scan_value value, enum scan_type type, enum scan_c
                     return 0;
             }
         case Cgeq:
+            // >= case
             switch (type) {
                 case Tbyte:
                     return value.Tbyte >= cond_value.Tbyte;
@@ -431,6 +446,7 @@ int satisfies_condition(union scan_value value, enum scan_type type, enum scan_c
                     return 0;
             }
         case Cleq:
+            // <= case
             switch (type) {
                 case Tbyte:
                     return value.Tbyte <= cond_value.Tbyte;
@@ -459,6 +475,7 @@ int satisfies_condition(union scan_value value, enum scan_type type, enum scan_c
                     return 0;
             }
         case Cexists:
+            // exists case (always true)
             return 1;
         case Cinvalid:
         default:
@@ -466,6 +483,7 @@ int satisfies_condition(union scan_value value, enum scan_type type, enum scan_c
     }
 }
 
+// Frees a node from the scan list
 // Return the next node since we generally use this in context of manipulating the list
 struct scan_node* free_node(struct scan_node* node, enum scan_type type) {
     struct scan_node* next = node->next;
@@ -476,7 +494,9 @@ struct scan_node* free_node(struct scan_node* node, enum scan_type type) {
     return next;
 }
 
+// Inject a syscall using ptrace
 // Assume ptrace is already attached so that we can inject multiple calls in a row
+// Also pass in syscall_addr instead of searching in inject_syscall to save on number of find commands issued
 int inject_syscall(unsigned long long* syscall_retv, pid_t pid, unsigned long syscall_addr, unsigned long long syscall_no,
         unsigned long long arg1, unsigned long long arg2, unsigned long long arg3,
         unsigned long long arg4, unsigned long long arg5, unsigned long long arg6) {
@@ -513,6 +533,8 @@ int inject_syscall(unsigned long long* syscall_retv, pid_t pid, unsigned long sy
         }
         waitid(P_PID, pid, &wait_info, WSTOPPED);
     }
+
+    // Get return value from injected syscall
     if (ptrace(PTRACE_GETREGS, pid, 0, &inject_regs) == -1) {
         perror("failed to PTRACE_GETREGS after syscall");
         return -1;
@@ -527,6 +549,7 @@ int inject_syscall(unsigned long long* syscall_retv, pid_t pid, unsigned long sy
     return 0;
 }
 
+// Print a timestamp for a command's execution time
 // From GNU documentation for subtracting timevals
 void print_timestamp(char* command, struct timeval* start, struct timeval* end) {
     /* Perform the carry for the later subtraction by updating start. */
