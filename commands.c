@@ -1159,7 +1159,7 @@ void help_cmd(char* input) {
             printf("format: page X\n");
             printf("Displays the 10 memory values on page X for the scan results (ordered by address)\n");
         }
-        else if (strcmp(sub_cmd, "page") == 0) {
+        else if (strcmp(sub_cmd, "save") == 0) {
             printf("save - saves a memory address found\n");
             printf("format: save X\n");
             printf("saves entry X (numbered in 'page') from the scan results for later use with 'display' and 'modify'\n");
